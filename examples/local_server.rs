@@ -8,7 +8,7 @@ use tokio::time::sleep;
 
 async fn handle_request(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path();
-    
+
     // Return different responses based on path
     match path {
         "/delay" => {
@@ -58,19 +58,18 @@ async fn handle_request(req: Request<Body>) -> Result<Response<Body>, Infallible
 async fn main() {
     // Bind to local address
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    
+
     // Create service
-    let make_svc = make_service_fn(|_conn| async {
-        Ok::<_, Infallible>(service_fn(handle_request))
-    });
-    
+    let make_svc =
+        make_service_fn(|_conn| async { Ok::<_, Infallible>(service_fn(handle_request)) });
+
     // Create server
     let server = Server::bind(&addr).serve(make_svc);
-    
+
     // Start server
     println!("Server running on http://{}", addr);
-    
+
     if let Err(e) = server.await {
         eprintln!("server error: {}", e);
     }
-} 
+}

@@ -7,19 +7,19 @@ use crate::error::{Error, Result};
 pub trait Item: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync + 'static {
     /// Get the item type name
     fn item_type(&self) -> &'static str;
-    
+
     /// Convert the item to a HashMap
     fn to_map(&self) -> Result<HashMap<String, serde_json::Value>> {
         let value = serde_json::to_value(self)?;
         match value {
             serde_json::Value::Object(map) => Ok(map.into_iter().collect()),
-            _ => Err(Error::item("Item is not an object")),
+            _ => Err(Box::new(Error::item("Item is not an object"))),
         }
     }
-    
+
     /// Convert the item to JSON
     fn to_json(&self) -> Result<String> {
-        serde_json::to_string(self).map_err(|e| Error::SerdeError(e.to_string()))
+        serde_json::to_string(self).map_err(|e| Box::new(Error::SerdeError(e.to_string())))
     }
 }
 
@@ -29,7 +29,7 @@ pub struct DynamicItem {
     /// The type of the item
     #[serde(rename = "_type")]
     pub item_type_name: String,
-    
+
     /// The fields of the item
     #[serde(flatten)]
     pub fields: HashMap<String, serde_json::Value>,
@@ -45,7 +45,11 @@ impl DynamicItem {
     }
 
     /// Set a field value
-    pub fn set<K: Into<String>, V: Into<serde_json::Value>>(&mut self, key: K, value: V) -> &mut Self {
+    pub fn set<K: Into<String>, V: Into<serde_json::Value>>(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> &mut Self {
         self.fields.insert(key.into(), value.into());
         self
     }
@@ -66,7 +70,7 @@ impl DynamicItem {
         if let Some(obj) = value.as_object() {
             Ok(obj.clone())
         } else {
-            Err(Error::item("Item is not an object"))
+            Err(Box::new(Error::item("Item is not an object")))
         }
     }
 }
@@ -119,7 +123,7 @@ mod tests {
 
         let json_str = item.to_json().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        
+
         assert_eq!(parsed["title"], "Test Product");
         assert_eq!(parsed["price"], 19.99);
         assert_eq!(parsed["tags"], json!(["test", "product"]));
@@ -137,4 +141,4 @@ mod tests {
         assert!(item.has_field("tags"));
         assert!(!item.has_field("description"));
     }
-} 
+}

@@ -1,20 +1,18 @@
 use scrapy_rs_core::async_trait;
 use scrapy_rs_core::error::Result;
+use scrapy_rs_core::item::DynamicItem;
 use scrapy_rs_core::request::Request;
 use scrapy_rs_core::response::Response;
 use scrapy_rs_core::spider::{ParseOutput, Spider};
-use scrapy_rs_core::item::DynamicItem;
-use scrapy_rs_middleware::{ChainedRequestMiddleware, ChainedResponseMiddleware, DefaultHeadersMiddleware};
+use scrapy_rs_downloader::{DownloaderConfig, HttpDownloader};
+use scrapy_rs_engine::{Engine, EngineConfig};
+use scrapy_rs_middleware::{
+    ChainedRequestMiddleware, ChainedResponseMiddleware, DefaultHeadersMiddleware,
+};
 use scrapy_rs_pipeline::{JsonFilePipeline, LogPipeline, PipelineType};
 use scrapy_rs_scheduler::MemoryScheduler;
-use scrapy_rs_downloader::{HttpDownloader, DownloaderConfig};
-use scrapy_rs_engine::{Engine, EngineConfig};
-use scrapy_rs_engine::resource_control::ResourceLimits;
-use scrapy_rs_middleware::{RequestMiddleware, ResponseMiddleware};
-use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// A custom spider that crawls quotes.toscrape.com and extracts quotes
 struct QuotesSpider {
@@ -50,9 +48,9 @@ impl Spider for QuotesSpider {
     async fn parse(&self, response: Response) -> Result<ParseOutput> {
         // In a real spider, you would use a library like scraper or html5ever to parse the HTML
         // For this example, we'll just create some dummy quotes
-        
+
         let mut output = ParseOutput::new();
-        
+
         // Create some dummy quotes
         for i in 1..6 {
             let mut quote = DynamicItem::new("quote");
@@ -61,7 +59,7 @@ impl Spider for QuotesSpider {
             quote.set("tags", serde_json::json!(["tag1", "tag2", "tag3"]));
             output.add_item(quote);
         }
-        
+
         // Extract the "next" link if it exists
         // In a real spider, you would parse the HTML to find the next link
         if !response.url.to_string().contains("page/2") {
@@ -69,7 +67,7 @@ impl Spider for QuotesSpider {
             let request = Request::get(next_url)?;
             output.add_request(request);
         }
-        
+
         Ok(output)
     }
 }
@@ -84,7 +82,7 @@ async fn main() -> Result<()> {
 
     // Create components
     let scheduler = Arc::new(MemoryScheduler::new());
-    
+
     let downloader_config = DownloaderConfig {
         concurrent_requests: 2,
         user_agent: "scrapy_rs/0.1.0 (+https://github.com/yourusername/scrapy_rs)".to_string(),
@@ -94,13 +92,14 @@ async fn main() -> Result<()> {
         ..DownloaderConfig::default()
     };
     let downloader = Arc::new(HttpDownloader::new(downloader_config)?);
-    
+
     // Create pipelines
-    let mut pipelines = Vec::new();
-    pipelines.push(PipelineType::Log(LogPipeline::info()));
-    pipelines.push(PipelineType::JsonFile(JsonFilePipeline::new("quotes.json", false)));
+    let pipelines = vec![
+        PipelineType::Log(LogPipeline::info()),
+        PipelineType::JsonFile(JsonFilePipeline::new("quotes.json", false)),
+    ];
     let pipeline = Arc::new(PipelineType::Chained(pipelines));
-    
+
     // Create request middlewares
     let mut headers = HashMap::new();
     headers.insert(
@@ -109,10 +108,10 @@ async fn main() -> Result<()> {
     );
     let mut request_middlewares = ChainedRequestMiddleware::new(vec![]);
     request_middlewares.add(DefaultHeadersMiddleware::new(headers));
-    
+
     // Create response middlewares
     let response_middlewares = ChainedResponseMiddleware::new(vec![]);
-    
+
     // Configure the engine
     let config = EngineConfig {
         concurrent_requests: 2,
@@ -124,7 +123,7 @@ async fn main() -> Result<()> {
         log_stats: true,
         ..EngineConfig::default()
     };
-    
+
     // Create the engine with all components
     let mut engine = Engine::with_components(
         spider,
@@ -153,4 +152,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-} 
+}

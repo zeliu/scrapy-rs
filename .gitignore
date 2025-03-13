@@ -1,13 +1,6 @@
 /target
 *.json
-*.pyc
-*.pyo
-*.pyd
-*.pyw
-*.pyz
-*.pywz
-*.pyzw
-*.py
 /test_project
 */target
 /python/build
+check.sh

@@ -5,9 +5,10 @@ use url::Url;
 
 use crate::error::{Error, Result};
 
-/// HTTP methods supported by the crawler
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+/// HTTP methods
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Method {
+    #[default]
     GET,
     POST,
     PUT,
@@ -17,50 +18,44 @@ pub enum Method {
     PATCH,
 }
 
-impl Default for Method {
-    fn default() -> Self {
-        Method::GET
-    }
-}
-
 /// Represents an HTTP request to be made by the crawler
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
     /// The URL to request
     pub url: Url,
-    
+
     /// The HTTP method to use
     #[serde(default)]
     pub method: Method,
-    
+
     /// HTTP headers to include
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    
+
     /// Request body (for POST, PUT, etc.)
     #[serde(default)]
     pub body: Option<Vec<u8>>,
-    
+
     /// Metadata associated with this request
     #[serde(default)]
     pub meta: HashMap<String, serde_json::Value>,
-    
+
     /// Priority of this request (higher values = higher priority)
     #[serde(default)]
     pub priority: i32,
-    
+
     /// Whether to follow redirects
     #[serde(default = "default_follow_redirects")]
     pub follow_redirects: bool,
-    
+
     /// Maximum number of redirects to follow
     #[serde(default = "default_max_redirects")]
     pub max_redirects: u32,
-    
+
     /// Callback name to be called when the response is received
     #[serde(default)]
     pub callback: Option<String>,
-    
+
     /// Error callback name to be called when the request fails
     #[serde(default)]
     pub errback: Option<String>,
@@ -116,7 +111,11 @@ impl Request {
     }
 
     /// Add metadata to the request
-    pub fn with_meta<K: Into<String>, V: Into<serde_json::Value>>(mut self, key: K, value: V) -> Self {
+    pub fn with_meta<K: Into<String>, V: Into<serde_json::Value>>(
+        mut self,
+        key: K,
+        value: V,
+    ) -> Self {
         self.meta.insert(key.into(), value.into());
         self
     }
@@ -181,7 +180,7 @@ mod tests {
         let req = Request::get("https://example.com")
             .unwrap()
             .with_header("User-Agent", "rs-spider/0.1.0");
-        
+
         assert_eq!(req.headers.get("User-Agent").unwrap(), "rs-spider/0.1.0");
     }
 
@@ -190,7 +189,7 @@ mod tests {
         let req = Request::get("https://example.com")
             .unwrap()
             .with_meta("depth", 2);
-        
+
         assert_eq!(req.meta.get("depth").unwrap(), &serde_json::json!(2));
     }
-} 
+}

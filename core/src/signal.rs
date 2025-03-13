@@ -64,9 +64,9 @@ pub enum SignalArgs {
     /// Spider related
     Spider(Arc<dyn Spider>),
     /// Request related
-    Request(Request),
+    Request(Box<Request>),
     /// Response related
-    Response(Response),
+    Response(Box<Response>),
     /// Item related
     Item(DynamicItem),
     /// Error related
@@ -167,7 +167,7 @@ mod tests {
     async fn test_signal_manager() {
         let signal_manager = SignalManager::new();
         let called = Arc::new(AtomicBool::new(false));
-        
+
         let called_clone = called.clone();
         signal_manager
             .connect(Signal::EngineStarted, move |_| {
@@ -176,21 +176,21 @@ mod tests {
             })
             .await
             .unwrap();
-        
+
         signal_manager
             .send(Signal::EngineStarted, SignalArgs::None)
             .await
             .unwrap();
-        
+
         assert!(called.load(Ordering::SeqCst));
     }
-    
+
     #[tokio::test]
     async fn test_multiple_handlers() {
         let signal_manager = SignalManager::new();
         let counter1 = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter2 = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        
+
         let counter1_clone = counter1.clone();
         signal_manager
             .connect(Signal::ItemScraped, move |_| {
@@ -199,7 +199,7 @@ mod tests {
             })
             .await
             .unwrap();
-        
+
         let counter2_clone = counter2.clone();
         signal_manager
             .connect(Signal::ItemScraped, move |_| {
@@ -208,21 +208,21 @@ mod tests {
             })
             .await
             .unwrap();
-        
+
         signal_manager
             .send(Signal::ItemScraped, SignalArgs::None)
             .await
             .unwrap();
-        
+
         assert_eq!(counter1.load(Ordering::SeqCst), 1);
         assert_eq!(counter2.load(Ordering::SeqCst), 1);
     }
-    
+
     #[tokio::test]
     async fn test_disconnect() {
         let signal_manager = SignalManager::new();
         let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        
+
         let counter_clone = counter.clone();
         signal_manager
             .connect(Signal::RequestSent, move |_| {
@@ -231,22 +231,25 @@ mod tests {
             })
             .await
             .unwrap();
-        
+
         signal_manager
             .send(Signal::RequestSent, SignalArgs::None)
             .await
             .unwrap();
-        
+
         assert_eq!(counter.load(Ordering::SeqCst), 1);
-        
-        signal_manager.disconnect(Signal::RequestSent).await.unwrap();
-        
+
+        signal_manager
+            .disconnect(Signal::RequestSent)
+            .await
+            .unwrap();
+
         signal_manager
             .send(Signal::RequestSent, SignalArgs::None)
             .await
             .unwrap();
-        
+
         // Counter should not increase because handler is disconnected
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
-} 
+}

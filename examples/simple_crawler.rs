@@ -1,15 +1,15 @@
 use scrapy_rs_core::item::DynamicItem;
-use scrapy_rs_core::request::Request;
 use scrapy_rs_core::response::Response;
 use scrapy_rs_core::spider::{ParseOutput, Spider};
+use scrapy_rs_downloader::{DownloaderConfig, HttpDownloader};
 use scrapy_rs_engine::{Engine, EngineConfig};
-use scrapy_rs_middleware::{DefaultHeadersMiddleware, RequestMiddleware, ChainedRequestMiddleware, ChainedResponseMiddleware, ResponseMiddleware};
-use scrapy_rs_pipeline::{JsonFilePipeline, Pipeline, PipelineType, LogPipeline};
+use scrapy_rs_middleware::{
+    ChainedRequestMiddleware, ChainedResponseMiddleware, DefaultHeadersMiddleware,
+};
+use scrapy_rs_pipeline::{JsonFilePipeline, LogPipeline, PipelineType};
 use scrapy_rs_scheduler::MemoryScheduler;
-use scrapy_rs_downloader::{HttpDownloader, DownloaderConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create components
     let scheduler = Arc::new(MemoryScheduler::new());
-    
+
     let downloader_config = DownloaderConfig {
         concurrent_requests: 5,
         user_agent: "scrapy_rs/0.1.0 (+https://github.com/yourusername/scrapy_rs)".to_string(),
@@ -34,13 +34,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..DownloaderConfig::default()
     };
     let downloader = Arc::new(HttpDownloader::new(downloader_config)?);
-    
+
     // Create pipelines
-    let mut pipelines = Vec::new();
-    pipelines.push(PipelineType::Log(LogPipeline::info()));
-    pipelines.push(PipelineType::JsonFile(JsonFilePipeline::new("items.json", false)));
+    let pipelines = vec![
+        PipelineType::Log(LogPipeline::info()),
+        PipelineType::JsonFile(JsonFilePipeline::new("items.json", false)),
+    ];
     let pipeline = Arc::new(PipelineType::Chained(pipelines));
-    
+
     // Create request middlewares
     let mut headers = HashMap::new();
     headers.insert(
@@ -49,10 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut request_middlewares = ChainedRequestMiddleware::new(vec![]);
     request_middlewares.add(DefaultHeadersMiddleware::new(headers));
-    
+
     // Create response middlewares
     let response_middlewares = ChainedResponseMiddleware::new(vec![]);
-    
+
     // Configure the engine
     let config = EngineConfig {
         concurrent_requests: 5,
@@ -64,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_stats: true,
         ..EngineConfig::default()
     };
-    
+
     // Create the engine with all components
     let mut engine = Engine::with_components(
         spider,
@@ -122,12 +123,12 @@ impl Spider for BasicSpider {
 
     async fn parse(&self, response: Response) -> scrapy_rs_core::error::Result<ParseOutput> {
         let mut output = ParseOutput::new();
-        
+
         // Create a simple item with the page title and URL
         let mut item = DynamicItem::new("page");
         item.set("url", response.url.to_string());
         item.set("status", response.status as u64);
-        
+
         // Extract a simple title from the HTML
         let body_str = String::from_utf8_lossy(&response.body);
         if let Some(title_start) = body_str.find("<title>") {
@@ -136,9 +137,9 @@ impl Spider for BasicSpider {
                 item.set("title", title.to_string());
             }
         }
-        
+
         output.add_item(item);
-        
+
         Ok(output)
     }
-} 
+}
