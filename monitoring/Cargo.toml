@@ -1,0 +1,30 @@
+[package]
+name = "scrapy_rs_monitoring"
+version = "0.1.0"
+edition = "2021"
+description = "Monitoring and debugging tools for Scrapy-RS"
+
+[dependencies]
+scrapy_rs_core = { path = "../core" }
+scrapy_rs_engine = { path = "../engine" }
+scrapy_rs_scheduler = { path = "../scheduler" }
+scrapy_rs_downloader = { path = "../downloader" }
+scrapy_rs_pipeline = { path = "../pipeline" }
+scrapy_rs_middleware = { path = "../middleware" }
+
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+axum = { version = "0.7", features = ["ws"] }
+tower = { version = "0.4" }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sysinfo = "0.30.5"
+async-stream = "0.3.5"

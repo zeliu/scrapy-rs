@@ -1,0 +1,20 @@
+[package]
+name = "scrapy_rs_downloader"
+version = "0.1.0"
+edition = "2021"
+description = "Downloader component for the Scrapy-RS web crawler"
+
+[dependencies]
+scrapy_rs_core = { path = "../core" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+backoff = { version = "0.4.0", features = ["tokio"] }
+
+[dev-dependencies]
+tokio-test = "0.4.3"
+wiremock = "0.5.22" 

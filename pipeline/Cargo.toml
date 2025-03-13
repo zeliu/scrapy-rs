@@ -1,0 +1,18 @@
+[package]
+name = "scrapy_rs_pipeline"
+version = "0.1.0"
+edition = "2021"
+description = "Pipeline component for the Scrapy-RS web crawler"
+
+[dependencies]
+scrapy_rs_core = { path = "../core" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4.3" 

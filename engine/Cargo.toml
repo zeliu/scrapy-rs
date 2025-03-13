@@ -1,0 +1,26 @@
+[package]
+name = "scrapy_rs_engine"
+version = "0.1.0"
+edition = "2021"
+description = "Engine component for the Scrapy-RS web crawler"
+
+[dependencies]
+scrapy_rs_core = { path = "../core" }
+scrapy_rs_scheduler = { path = "../scheduler" }
+scrapy_rs_downloader = { path = "../downloader" }
+scrapy_rs_pipeline = { path = "../pipeline" }
+scrapy_rs_middleware = { path = "../middleware" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sysinfo = "0.30.5"
+
+[dev-dependencies]
+tokio-test = "0.4.3"
+wiremock = "0.5.22" 

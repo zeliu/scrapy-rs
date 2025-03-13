@@ -1,0 +1,17 @@
+[package]
+name = "scrapy_rs_core"
+version = "0.1.0"
+edition = "2021"
+description = "Core components for the Scrapy-RS web crawler"
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+log = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies] 
