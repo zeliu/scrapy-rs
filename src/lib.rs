@@ -87,15 +87,13 @@ pub mod prelude {
         RetryMiddleware, UrlFilterMiddleware,
     };
     pub use scrapy_rs_pipeline::{
-        PipelineType, DummyPipeline, FilterPipeline, JsonFilePipeline, LogPipeline, Pipeline,
+        DummyPipeline, FilterPipeline, JsonFilePipeline, LogPipeline, Pipeline, PipelineType,
     };
     pub use scrapy_rs_scheduler::{
-        BreadthFirstScheduler, CrawlStrategy, DomainGroupScheduler, DepthFirstScheduler,
+        BreadthFirstScheduler, CrawlStrategy, DepthFirstScheduler, DomainGroupScheduler,
         MemoryScheduler, Scheduler, SchedulerConfig,
     };
-    
+
     // Export settings module
     pub use crate::settings::{Settings, SettingsError, SettingsFormat};
-    
-   
-} 
+}

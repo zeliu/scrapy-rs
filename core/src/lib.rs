@@ -8,8 +8,8 @@ pub mod spider;
 
 pub use error::{Error, ErrorContext, HttpError, NetworkError, ResponseParseError, Result};
 pub use error_handler::{
-    ErrorAction, ErrorCallback, ErrorHandler, ErrorManager, ErrorStats,
-    DefaultErrorHandler, LogErrorCallback, IgnoreErrorCallback, AbortOnErrorCallback,
+    AbortOnErrorCallback, DefaultErrorHandler, ErrorAction, ErrorCallback, ErrorHandler,
+    ErrorManager, ErrorStats, IgnoreErrorCallback, LogErrorCallback,
 };
 pub use item::Item;
 pub use request::Request;
@@ -30,4 +30,4 @@ mod tests {
     fn it_works() {
         assert_eq!(2 + 2, 4);
     }
-} 
+}

@@ -1,9 +1,9 @@
+use log::{debug, info, warn};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use sysinfo::{Pid, System};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
-use log::{debug, info, warn};
-use sysinfo::{System, Pid, Process};
 
 /// Resource usage statistics
 #[derive(Debug, Clone, Default)]
@@ -40,9 +40,9 @@ pub struct ResourceLimits {
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            max_memory: 0, // No limit by default
-            max_cpu: 0.0,  // No limit by default
-            max_tasks: 0,  // No limit by default
+            max_memory: 0,           // No limit by default
+            max_cpu: 0.0,            // No limit by default
+            max_tasks: 0,            // No limit by default
             max_pending_requests: 0, // No limit by default
             throttle_factor: 0.5,
             monitor_interval_ms: 1000,
@@ -53,6 +53,7 @@ impl Default for ResourceLimits {
 /// Resource controller for managing system resources
 pub struct ResourceController {
     /// System information
+    #[allow(dead_code)]
     system: System,
     /// Current process ID
     pid: u32,
@@ -69,7 +70,7 @@ impl ResourceController {
     pub fn new(limits: ResourceLimits) -> Self {
         let mut system = System::new_all();
         system.refresh_all();
-        
+
         Self {
             system,
             pid: std::process::id(),
@@ -78,7 +79,7 @@ impl ResourceController {
             running: Arc::new(RwLock::new(false)),
         }
     }
-    
+
     /// Start the resource monitoring
     pub async fn start(&self) {
         let mut running = self.running.write().await;
@@ -87,101 +88,101 @@ impl ResourceController {
         }
         *running = true;
         drop(running);
-        
+
         let stats = self.stats.clone();
         let limits = self.limits.clone();
         let running = self.running.clone();
         let pid = self.pid;
         let mut system = System::new_all();
-        
+
         tokio::spawn(async move {
             while *running.read().await {
                 // Refresh system information
                 system.refresh_all();
-                
+
                 // Get process information
                 if let Some(process) = system.process(Pid::from_u32(pid)) {
                     let memory_usage = process.memory();
                     let cpu_usage = process.cpu_usage();
-                    
+
                     // Update stats
                     let mut stats_write = stats.write().await;
                     stats_write.memory_usage = memory_usage;
                     stats_write.cpu_usage = cpu_usage;
                     stats_write.last_update = Some(Instant::now());
-                    
+
                     // Check limits and apply throttling if needed
-                    let throttle = if (limits.max_memory > 0 && memory_usage > limits.max_memory) ||
-                                     (limits.max_cpu > 0.0 && cpu_usage > limits.max_cpu) ||
-                                     (limits.max_tasks > 0 && stats_write.active_tasks > limits.max_tasks) ||
-                                     (limits.max_pending_requests > 0 && stats_write.pending_requests > limits.max_pending_requests) {
-                        true
-                    } else {
-                        false
-                    };
-                    
+                    let throttle = (limits.max_memory > 0 && memory_usage > limits.max_memory)
+                        || (limits.max_cpu > 0.0 && cpu_usage > limits.max_cpu)
+                        || (limits.max_tasks > 0 && stats_write.active_tasks > limits.max_tasks)
+                        || (limits.max_pending_requests > 0
+                            && stats_write.pending_requests > limits.max_pending_requests);
+
                     drop(stats_write);
-                    
+
                     if throttle {
                         // Log throttling
                         warn!("Resource limits exceeded: memory={}MB, CPU={}%, tasks={}, requests={}. Throttling...",
                               memory_usage / 1024 / 1024, cpu_usage, stats.read().await.active_tasks, stats.read().await.pending_requests);
-                        
+
                         // Sleep to throttle
-                        let throttle_ms = (limits.monitor_interval_ms as f32 * limits.throttle_factor) as u64;
+                        let throttle_ms =
+                            (limits.monitor_interval_ms as f32 * limits.throttle_factor) as u64;
                         sleep(Duration::from_millis(throttle_ms)).await;
                     }
                 }
-                
+
                 // Sleep until next check
                 sleep(Duration::from_millis(limits.monitor_interval_ms)).await;
             }
         });
-        
+
         info!("Resource controller started");
     }
-    
+
     /// Stop the resource monitoring
     pub async fn stop(&self) {
         let mut running = self.running.write().await;
         *running = false;
         info!("Resource controller stopped");
     }
-    
+
     /// Update active tasks count
     pub async fn update_active_tasks(&self, count: usize) {
         let mut stats = self.stats.write().await;
         stats.active_tasks = count;
     }
-    
+
     /// Update pending requests count
     pub async fn update_pending_requests(&self, count: usize) {
         let mut stats = self.stats.write().await;
         stats.pending_requests = count;
     }
-    
+
     /// Get current resource stats
     pub async fn get_stats(&self) -> ResourceStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Check if throttling is needed
     pub async fn should_throttle(&self) -> bool {
         let stats = self.stats.read().await;
         let limits = &self.limits;
-        
-        (limits.max_memory > 0 && stats.memory_usage > limits.max_memory) ||
-        (limits.max_cpu > 0.0 && stats.cpu_usage > limits.max_cpu) ||
-        (limits.max_tasks > 0 && stats.active_tasks > limits.max_tasks) ||
-        (limits.max_pending_requests > 0 && stats.pending_requests > limits.max_pending_requests)
+
+        (limits.max_memory > 0 && stats.memory_usage > limits.max_memory)
+            || (limits.max_cpu > 0.0 && stats.cpu_usage > limits.max_cpu)
+            || (limits.max_tasks > 0 && stats.active_tasks > limits.max_tasks)
+            || (limits.max_pending_requests > 0
+                && stats.pending_requests > limits.max_pending_requests)
     }
-    
+
     /// Apply throttling if needed
     pub async fn throttle_if_needed(&self) {
         if self.should_throttle().await {
-            let throttle_ms = (self.limits.monitor_interval_ms as f32 * self.limits.throttle_factor) as u64;
+            let throttle_ms =
+                (self.limits.monitor_interval_ms as f32 * self.limits.throttle_factor) as u64;
             debug!("Throttling for {}ms", throttle_ms);
             sleep(Duration::from_millis(throttle_ms)).await;
         }
     }
-} 
+}

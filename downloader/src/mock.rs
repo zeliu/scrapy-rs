@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use scrapy_rs_core::async_trait;
 use scrapy_rs_core::error::{Error, Result};
@@ -21,10 +20,16 @@ impl MockDownloader {
             responses: HashMap::new(),
         }
     }
-    
+
     /// Add a response for a specific URL
     pub fn add_response(&mut self, url: &str, response: Response) {
         self.responses.insert(url.to_string(), response);
+    }
+}
+
+impl Default for MockDownloader {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -38,7 +43,11 @@ impl Downloader for MockDownloader {
             // Create a default response
             let mut headers = HashMap::new();
             headers.insert("Content-Type".to_string(), "text/html".to_string());
-            let body = format!("<html><body><h1>Mock response for {}</h1></body></html>", url).into_bytes();
+            let body = format!(
+                "<html><body><h1>Mock response for {}</h1></body></html>",
+                url
+            )
+            .into_bytes();
             Ok(Response::new(request, 200, headers, body))
         }
     }
@@ -50,6 +59,6 @@ pub struct FailingDownloader;
 #[async_trait]
 impl Downloader for FailingDownloader {
     async fn download(&self, _request: Request) -> Result<Response> {
-        Err(Error::other("Mock downloader failure"))
+        Err(Box::new(Error::other("Mock downloader failure")))
     }
-} 
+}
