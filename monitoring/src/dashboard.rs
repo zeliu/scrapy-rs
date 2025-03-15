@@ -7,7 +7,7 @@ use crate::metrics::MetricsCollector;
 use crate::MonitoringEvent;
 use crate::Result;
 
-/// Dashboard for RS-Spider monitoring
+/// Dashboard for Scrapy-RS monitoring
 pub struct Dashboard {
     /// Port to listen on
     port: u16,

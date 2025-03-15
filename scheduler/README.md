@@ -1,6 +1,6 @@
-# RS-Spider Scheduler
+# Scrapy-RS Scheduler
 
-The scheduler component for the RS-Spider web crawler. It provides different scheduling strategies for crawling.
+The scheduler component for the Scrapy-RS web crawler. It provides different scheduling strategies for crawling.
 
 ## Features
 
@@ -111,7 +111,7 @@ async fn main() {
 
 ## Integration with Engine
 
-When using the RS-Spider engine, you can configure the scheduler type and strategy:
+When using the Scrapy-RS engine, you can configure the scheduler type and strategy:
 
 ```rust
 use scrapy_rs_engine::{Engine, EngineConfig, SchedulerType, CrawlStrategy};

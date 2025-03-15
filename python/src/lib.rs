@@ -20,7 +20,13 @@ use scrapy_rs_pipeline::{PipelineType, JsonFilePipeline, LogPipeline, Pipeline};
 use scrapy_rs_scheduler::{MemoryScheduler, Scheduler};
 use tokio::runtime::Runtime;
 use url::Url;
-use scrapy_rs::settings::{Settings as RsSettings, SettingsError};
+use ::scrapy_rs::settings::{Settings as RsSettings, SettingsError};
+use ::scrapy_rs::config_adapters::{
+    create_spider_from_settings,
+    create_downloader_from_settings,
+    create_scheduler_from_settings,
+    engine_config_from_settings
+};
 
 
 /// Python module for scrapy_rs
@@ -771,8 +777,6 @@ impl PySettings {
         format!("PySettings with {} settings", self.inner.all().len())
     }
     
-   
-    
     /// Create a spider from settings
     fn create_spider(&self) -> PyResult<PySpider> {
         let runtime = Runtime::new().map_err(|e| {
@@ -1049,4 +1053,9 @@ impl PyEngineConfig {
         format!("PyEngineConfig(concurrent_requests={}, download_delay_ms={})",
             self.inner.concurrent_requests, self.inner.download_delay_ms)
     }
+}
+
+// Helper function to handle Box<Error> to PyErr conversion
+fn boxed_rs_err_to_py_err(err: Box<scrapy_rs_core::error::Error>) -> PyErr {
+    rs_err_to_py_err(*err)
 } 

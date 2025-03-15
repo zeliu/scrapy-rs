@@ -1,72 +1,55 @@
 #!/usr/bin/env python3
 """
-Example of using settings in RS-Spider from Python.
-This example demonstrates how to use settings with the Python bindings.
+Example of using settings in Scrapy-RS from Python.
+This example demonstrates how to configure the crawler using settings.
 """
 
 import sys
 import os
 import time
 
-# Add site-packages directory to sys.path
-site_packages = '/Users/liuze/Library/Python/3.9/lib/python3.9/site-packages'
-if site_packages not in sys.path:
-    sys.path.append(site_packages)
-
+# Add parent directory to sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 try:
-    from rs_spider import PySpider, PyEngine, PySettings
-except ImportError as e:
-    print("Unable to import rs_spider module. Please make sure Python bindings are properly installed.")
-    print(f"Import error: {e}")
+    from scrapy_rs import PySpider, PyEngine, PySettings
+except ImportError:
+    print("Unable to import scrapy_rs module. Please make sure Python bindings are properly installed.")
     print("Current Python path:", sys.path)
     sys.exit(1)
 
 def main():
     """Run the example."""
-    print("Using settings for RS-Spider from Python")
+    print("Using settings for Scrapy-RS from Python")
     
-    # Load settings from file
-    print("Loading settings from file...")
-    settings_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../examples/settings.py'))
-    settings = PySettings.from_file(settings_path)
-    
-    # Get specific settings
-    bot_name = settings.get("BOT_NAME")
-    user_agent = settings.get("USER_AGENT")
-    concurrent_requests = settings.get("CONCURRENT_REQUESTS")
-    download_delay_ms = settings.get("DOWNLOAD_DELAY_MS")
-    follow_redirects = settings.get("FOLLOW_REDIRECTS")
-    start_urls = settings.get("START_URLS")
-    allowed_domains = settings.get("ALLOWED_DOMAINS")
-    
-    print("\nSettings:")
-    print(f"  Bot name: {bot_name}")
-    print(f"  User agent: {user_agent}")
-    print(f"  Concurrent requests: {concurrent_requests}")
-    print(f"  Download delay (ms): {download_delay_ms}")
-    print(f"  Follow redirects: {follow_redirects}")
-    print(f"  Start URLs: {start_urls}")
-    print(f"  Allowed domains: {allowed_domains}")
+    # Create settings
+    settings = PySettings()
+    settings.set("BOT_NAME", "example_bot")
+    settings.set("USER_AGENT", "Scrapy-RS Example Bot/1.0")
+    settings.set("CONCURRENT_REQUESTS", 4)
+    settings.set("DOWNLOAD_DELAY", 1.0)
+    settings.set("LOG_LEVEL", "INFO")
     
     # Create a spider
-    spider = PySpider("example", start_urls, allowed_domains)
+    spider = PySpider(
+        name="example",
+        start_urls=["https://example.com"],
+        allowed_domains=["example.com"]
+    )
     
-    # Create an engine
-    engine = PyEngine(spider)
+    # Create an engine with settings
+    engine = PyEngine(spider, settings)
     
-    print("\nEngine created with settings from file.")
-    print("In a real application, you would now run the engine with engine.run()")
+    # Run the engine
+    stats = engine.run()
     
-    # In a real application, you would run the engine:
-    # stats = engine.run()
-    # print("Crawl completed!")
-    # print(f"Requests: {stats.request_count}")
-    # print(f"Responses: {stats.response_count}")
-    # print(f"Items: {stats.item_count}")
-    # print(f"Errors: {stats.error_count}")
-    # print(f"Duration: {stats.duration_seconds:.2f} seconds")
-    # print(f"Requests per second: {stats.requests_per_second:.2f}")
-
+    # Print the results
+    print("\nCrawl completed!")
+    print(f"Requests: {stats.request_count}")
+    print(f"Responses: {stats.response_count}")
+    print(f"Items: {stats.item_count}")
+    print(f"Errors: {stats.error_count}")
+    print(f"Duration: {stats.duration_seconds:.2f} seconds")
+    print(f"Requests per second: {stats.requests_per_second:.2f}")
 
 if __name__ == "__main__":
     main() 

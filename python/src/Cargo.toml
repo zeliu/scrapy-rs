@@ -1,0 +1,36 @@
+[package]
+name = "scrapy_rs_python"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for the Scrapy-RS web crawler"
+
+[workspace]
+
+[lib]
+name = "scrapy_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+scrapy_rs = { path = ".." }
+scrapy_rs_core = { path = "../core" }
+scrapy_rs_scheduler = { path = "../scheduler" }
+scrapy_rs_downloader = { path = "../downloader" }
+scrapy_rs_pipeline = { path = "../pipeline" }
+scrapy_rs_middleware = { path = "../middleware" }
+scrapy_rs_engine = { path = "../engine" }
+pyo3 = { version = "0.20.0", features = ["extension-module", "abi3-py39", "abi3-py310", "abi3-py311", "abi3-py312"] }
+tokio = { version = "1.0", features = ["full"] }
+url = "2.3"
+log = "0.4"
+env_logger = "0.10"
+thiserror = "1.0"
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+[build-dependencies]
+pyo3-build-config = "0.20.2"
+
+[dev-dependencies]
+tokio-test = "0.4.3" 

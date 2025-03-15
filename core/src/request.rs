@@ -179,9 +179,9 @@ mod tests {
     fn test_request_with_header() {
         let req = Request::get("https://example.com")
             .unwrap()
-            .with_header("User-Agent", "rs-spider/0.1.0");
+            .with_header("User-Agent", "scrapy-rs/0.1.0");
 
-        assert_eq!(req.headers.get("User-Agent").unwrap(), "rs-spider/0.1.0");
+        assert_eq!(req.headers.get("User-Agent").unwrap(), "scrapy-rs/0.1.0");
     }
 
     #[test]
