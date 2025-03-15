@@ -8,8 +8,8 @@ use scrapy_rs_core::spider::{ParseOutput, Spider};
 use scrapy_rs_downloader::{DownloaderConfig, HttpDownloader};
 use scrapy_rs_engine::{Engine, EngineConfig, SchedulerType};
 use scrapy_rs_middleware::{
-    ChainedRequestMiddleware, ChainedResponseMiddleware, DefaultHeadersMiddleware,
-    LogLevel, ResponseLoggerMiddleware,
+    ChainedRequestMiddleware, ChainedResponseMiddleware, DefaultHeadersMiddleware, LogLevel,
+    ResponseLoggerMiddleware,
 };
 use scrapy_rs_pipeline::{JsonFilePipeline, LogPipeline, PipelineType};
 use scrapy_rs_scheduler::MemoryScheduler;
@@ -61,7 +61,10 @@ impl Spider for SimpleCrawler {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create a spider
-    let spider = Arc::new(SimpleCrawler::new("simple_crawler", vec!["https://example.com".to_string()]));
+    let spider = Arc::new(SimpleCrawler::new(
+        "simple_crawler",
+        vec!["https://example.com".to_string()],
+    ));
 
     // Create a scheduler
     let scheduler = Arc::new(MemoryScheduler::new());
@@ -76,14 +79,15 @@ async fn main() -> Result<()> {
     request_middleware.add(DefaultHeadersMiddleware::new(headers));
 
     // Create a response middleware chain
-    let response_middleware = ChainedResponseMiddleware::new(vec![
-        Box::new(ResponseLoggerMiddleware::new(LogLevel::Info))
-    ]);
+    let response_middleware = ChainedResponseMiddleware::new(vec![Box::new(
+        ResponseLoggerMiddleware::new(LogLevel::Info),
+    )]);
 
     // Create pipelines
-    let mut pipelines = Vec::new();
-    pipelines.push(PipelineType::Log(LogPipeline::info()));
-    pipelines.push(PipelineType::JsonFile(JsonFilePipeline::new("items.json", false)));
+    let pipelines = vec![
+        PipelineType::Log(LogPipeline::info()),
+        PipelineType::JsonFile(JsonFilePipeline::new("items.json", false)),
+    ];
     let pipeline = Arc::new(PipelineType::Chained(pipelines));
 
     // Create a downloader

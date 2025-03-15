@@ -806,13 +806,13 @@ mod tests {
 
         // Get the next requests in FIFO order
         let next = scheduler.next().await.unwrap();
-        assert_eq!(next.url.as_str(), "https://example.com/3");
+        assert_eq!(next.url.as_str(), "https://example.com/1");
 
         let next = scheduler.next().await.unwrap();
         assert_eq!(next.url.as_str(), "https://example.com/2");
 
         let next = scheduler.next().await.unwrap();
-        assert_eq!(next.url.as_str(), "https://example.com/1");
+        assert_eq!(next.url.as_str(), "https://example.com/3");
 
         // Queue should now be empty
         assert!(scheduler.is_empty().await);
