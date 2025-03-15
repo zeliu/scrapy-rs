@@ -490,7 +490,7 @@ fn list_spiders(settings_path: Option<&str>) {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() && path.extension().map_or(false, |ext| ext == "py") {
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "py") {
             if let Some(stem) = path.file_stem() {
                 if let Some(name) = stem.to_str() {
                     if name != "__init__" {

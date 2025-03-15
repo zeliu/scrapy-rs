@@ -23,6 +23,7 @@ serde_json = "1.0.114"
 toml = "0.8.10"
 pyo3 = { version = "0.20.2", features = ["extension-module"] }
 hyper = { version = "0.14", features = ["full"] }
+serde_with = "3.7.0"
 
 [package]
 name = "scrapy_rs"

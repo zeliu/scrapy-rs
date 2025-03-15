@@ -1077,6 +1077,10 @@ mod tests {
             body: vec![],
             request: Request::get("https://example.com").unwrap(),
             meta: HashMap::new(),
+            flags: Vec::new(),
+            certificate: None,
+            ip_address: None,
+            protocol: None,
         };
 
         let processed = middleware
@@ -1098,6 +1102,10 @@ mod tests {
             body: vec![],
             request: Request::get("https://example.com").unwrap(),
             meta: HashMap::new(),
+            flags: Vec::new(),
+            certificate: None,
+            ip_address: None,
+            protocol: None,
         };
 
         // First retry
