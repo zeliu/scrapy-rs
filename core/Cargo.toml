@@ -13,5 +13,6 @@ url = { workspace = true }
 log = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
+serde_with = { workspace = true }
 
 [dev-dependencies] 

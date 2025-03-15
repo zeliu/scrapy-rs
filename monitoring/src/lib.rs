@@ -95,7 +95,7 @@ impl Default for MonitoringConfig {
     }
 }
 
-/// Monitoring system for RS-Spider
+/// Monitoring system for Scrapy-RS
 pub struct Monitoring {
     /// Monitoring configuration
     config: MonitoringConfig,

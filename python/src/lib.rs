@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::executor::block_on;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -20,7 +21,13 @@ use scrapy_rs_pipeline::{PipelineType, JsonFilePipeline, LogPipeline, Pipeline};
 use scrapy_rs_scheduler::{MemoryScheduler, Scheduler};
 use tokio::runtime::Runtime;
 use url::Url;
-use scrapy_rs::settings::{Settings as RsSettings, SettingsError};
+use ::scrapy_rs::settings::{Settings as RsSettings, SettingsError};
+use ::scrapy_rs::config_adapters::{
+    create_spider_from_settings,
+    create_downloader_from_settings,
+    create_scheduler_from_settings,
+    engine_config_from_settings
+};
 
 
 /// Python module for scrapy_rs
@@ -153,7 +160,18 @@ struct PyRequest {
 #[pymethods]
 impl PyRequest {
     #[new]
-    fn new(url: &str, method: Option<&str>, headers: Option<&PyDict>, body: Option<&[u8]>) -> PyResult<Self> {
+    fn new(
+        url: &str, 
+        method: Option<&str>, 
+        headers: Option<&PyDict>, 
+        body: Option<&[u8]>,
+        cookies: Option<&PyDict>,
+        dont_filter: Option<bool>,
+        timeout: Option<f64>,
+        encoding: Option<&str>,
+        flags: Option<Vec<String>>,
+        proxy: Option<&str>
+    ) -> PyResult<Self> {
         // Parse the URL
         let url = Url::parse(url).map_err(|e| {
             PyValueError::new_err(format!("Invalid URL: {}", e))
@@ -216,6 +234,39 @@ impl PyRequest {
             for (key, value) in headers_map {
                 request.headers.insert(key, value);
             }
+        }
+        
+        // Add cookies if provided
+        if let Some(cookies_dict) = cookies {
+            let cookies_map = py_dict_to_hashmap(cookies_dict)?;
+            for (key, value) in cookies_map {
+                request.cookies.insert(key, value);
+            }
+        }
+        
+        // Set dont_filter if provided
+        if let Some(df) = dont_filter {
+            request.dont_filter = df;
+        }
+        
+        // Set timeout if provided
+        if let Some(t) = timeout {
+            request.timeout = Some(Duration::from_secs_f64(t));
+        }
+        
+        // Set encoding if provided
+        if let Some(enc) = encoding {
+            request.encoding = Some(enc.to_string());
+        }
+        
+        // Set flags if provided
+        if let Some(f) = flags {
+            request.flags = f;
+        }
+        
+        // Set proxy if provided
+        if let Some(p) = proxy {
+            request.proxy = Some(p.to_string());
         }
         
         Ok(Self { inner: request })
@@ -296,6 +347,95 @@ impl PyRequest {
         Ok(())
     }
     
+    /// Get the cookies of the request
+    #[getter]
+    fn cookies(&self, py: Python) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        
+        for (key, value) in &self.inner.cookies {
+            dict.set_item(key, value)?;
+        }
+        
+        Ok(dict.to_object(py))
+    }
+    
+    /// Set a cookie for the request
+    fn set_cookie(&mut self, name: &str, value: &str) -> PyResult<()> {
+        self.inner.cookies.insert(name.to_string(), value.to_string());
+        Ok(())
+    }
+    
+    /// Get the dont_filter flag
+    #[getter]
+    fn dont_filter(&self) -> bool {
+        self.inner.dont_filter
+    }
+    
+    /// Set the dont_filter flag
+    fn set_dont_filter(&mut self, dont_filter: bool) -> PyResult<()> {
+        self.inner.dont_filter = dont_filter;
+        Ok(())
+    }
+    
+    /// Get the timeout in seconds
+    #[getter]
+    fn timeout(&self) -> Option<f64> {
+        self.inner.timeout.map(|d| d.as_secs_f64())
+    }
+    
+    /// Set the timeout in seconds
+    fn set_timeout(&mut self, timeout_secs: f64) -> PyResult<()> {
+        self.inner.timeout = Some(Duration::from_secs_f64(timeout_secs));
+        Ok(())
+    }
+    
+    /// Get the encoding
+    #[getter]
+    fn encoding(&self) -> Option<String> {
+        self.inner.encoding.clone()
+    }
+    
+    /// Set the encoding
+    fn set_encoding(&mut self, encoding: &str) -> PyResult<()> {
+        self.inner.encoding = Some(encoding.to_string());
+        Ok(())
+    }
+    
+    /// Get the flags
+    #[getter]
+    fn flags(&self) -> Vec<String> {
+        self.inner.flags.clone()
+    }
+    
+    /// Add a flag to the request
+    fn add_flag(&mut self, flag: &str) -> PyResult<()> {
+        self.inner.flags.push(flag.to_string());
+        Ok(())
+    }
+    
+    /// Check if a flag is present
+    fn has_flag(&self, flag: &str) -> bool {
+        self.inner.has_flag(flag)
+    }
+    
+    /// Get the proxy URL
+    #[getter]
+    fn proxy(&self) -> Option<String> {
+        self.inner.proxy.clone()
+    }
+    
+    /// Set the proxy URL
+    fn set_proxy(&mut self, proxy: &str) -> PyResult<()> {
+        self.inner.proxy = Some(proxy.to_string());
+        Ok(())
+    }
+    
+    /// Get the download latency in seconds
+    #[getter]
+    fn download_latency(&self) -> Option<f64> {
+        self.inner.download_latency.map(|d| d.as_secs_f64())
+    }
+    
     fn __repr__(&self) -> String {
         format!("Request(url={}, method={})", self.inner.url, self.method())
     }
@@ -315,6 +455,77 @@ impl PyResponse {
 
 #[pymethods]
 impl PyResponse {
+    #[new]
+    #[pyo3(signature = (
+        url,
+        status=200,
+        headers=None,
+        body=b"",
+        request=None,
+        flags=None,
+        certificate=None,
+        ip_address=None,
+        protocol=None
+    ))]
+    fn py_new(
+        url: &str,
+        status: u16,
+        headers: Option<&PyDict>,
+        body: Vec<u8>,
+        request: Option<&PyRequest>,
+        flags: Option<Vec<String>>,
+        certificate: Option<Vec<u8>>,
+        ip_address: Option<&str>,
+        protocol: Option<&str>,
+        py: Python,
+    ) -> PyResult<Self> {
+        // Parse URL
+        let parsed_url = Url::parse(url).map_err(|e| {
+            PyValueError::new_err(format!("Invalid URL: {}", e))
+        })?;
+        
+        // Convert headers
+        let mut headers_map = HashMap::new();
+        if let Some(h) = headers {
+            for (key, value) in h.iter() {
+                let key = key.extract::<String>()?;
+                let value = value.extract::<String>()?;
+                headers_map.insert(key, value);
+            }
+        }
+        
+        // Get request or create a default one
+        let req = match request {
+            Some(r) => r.inner.clone(),
+            None => Request::get(url).map_err(rs_err_to_py_err)?,
+        };
+        
+        // Create the response
+        let mut response = Response::new(req, status, headers_map, body);
+        
+        // Add flags if provided
+        if let Some(f) = flags {
+            response.flags = f;
+        }
+        
+        // Set certificate if provided
+        if let Some(cert) = certificate {
+            response.certificate = Some(cert);
+        }
+        
+        // Set IP address if provided
+        if let Some(ip) = ip_address {
+            response.ip_address = Some(ip.to_string());
+        }
+        
+        // Set protocol if provided
+        if let Some(proto) = protocol {
+            response.protocol = Some(proto.to_string());
+        }
+        
+        Ok(Self { inner: response })
+    }
+    
     /// Get the URL of the response
     #[getter]
     fn url(&self) -> String {
@@ -376,6 +587,41 @@ impl PyResponse {
         Ok(dict.to_object(py))
     }
     
+    /// Get the flags of the response
+    #[getter]
+    fn flags(&self) -> Vec<String> {
+        self.inner.flags.clone()
+    }
+    
+    /// Add a flag to the response
+    fn add_flag(&mut self, flag: &str) -> PyResult<()> {
+        self.inner.flags.push(flag.to_string());
+        Ok(())
+    }
+    
+    /// Check if a flag is present
+    fn has_flag(&self, flag: &str) -> bool {
+        self.inner.has_flag(flag)
+    }
+    
+    /// Get the certificate of the response
+    #[getter]
+    fn certificate(&self) -> Option<Vec<u8>> {
+        self.inner.certificate.clone()
+    }
+    
+    /// Get the IP address of the response
+    #[getter]
+    fn ip_address(&self) -> Option<String> {
+        self.inner.ip_address.clone()
+    }
+    
+    /// Get the protocol of the response
+    #[getter]
+    fn protocol(&self) -> Option<String> {
+        self.inner.protocol.clone()
+    }
+    
     /// Check if the response was successful
     fn is_success(&self) -> bool {
         self.inner.is_success()
@@ -384,6 +630,118 @@ impl PyResponse {
     /// Check if the response is a redirect
     fn is_redirect(&self) -> bool {
         self.inner.is_redirect()
+    }
+    
+    /// Join this response's URL with a relative URL
+    fn urljoin(&self, url: &str) -> PyResult<String> {
+        let joined_url = self.inner.urljoin(url).map_err(rs_err_to_py_err)?;
+        Ok(joined_url.to_string())
+    }
+    
+    /// Create a new request from a URL found in this response
+    fn follow(&self, url: &str) -> PyResult<PyRequest> {
+        let request = self.inner.follow(url).map_err(rs_err_to_py_err)?;
+        Ok(PyRequest { inner: request })
+    }
+    
+    /// Create multiple requests from URLs found in this response
+    fn follow_all(&self, urls: Vec<&str>) -> PyResult<Vec<PyRequest>> {
+        let requests = self.inner.follow_all(urls).map_err(rs_err_to_py_err)?;
+        Ok(requests.into_iter().map(|req| PyRequest { inner: req }).collect())
+    }
+    
+    /// Create a copy of this response
+    fn copy(&self) -> Self {
+        Self {
+            inner: self.inner.copy(),
+        }
+    }
+    
+    /// Create a new response with modified attributes
+    #[pyo3(signature = (
+        url=None, 
+        status=None, 
+        headers=None, 
+        body=None, 
+        request=None, 
+        meta=None, 
+        flags=None, 
+        certificate=None, 
+        ip_address=None, 
+        protocol=None
+    ))]
+    fn replace(
+        &self,
+        url: Option<&str>,
+        status: Option<u16>,
+        headers: Option<&PyDict>,
+        body: Option<Vec<u8>>,
+        request: Option<&PyRequest>,
+        meta: Option<&PyDict>,
+        flags: Option<Vec<String>>,
+        certificate: Option<Vec<u8>>,
+        ip_address: Option<&str>,
+        protocol: Option<&str>,
+        py: Python,
+    ) -> PyResult<Self> {
+        // Convert Python types to Rust types
+        let url_opt = if let Some(u) = url {
+            Some(Url::parse(u).map_err(|e| {
+                PyValueError::new_err(format!("Invalid URL: {}", e))
+            })?)
+        } else {
+            None
+        };
+        
+        let headers_opt = if let Some(h) = headers {
+            let mut map = HashMap::new();
+            for (key, value) in h.iter() {
+                let key = key.extract::<String>()?;
+                let value = value.extract::<String>()?;
+                map.insert(key, value);
+            }
+            Some(map)
+        } else {
+            None
+        };
+        
+        let request_opt = request.map(|r| r.inner.clone());
+        
+        let meta_opt = if let Some(m) = meta {
+            let mut map = HashMap::new();
+            for (key, value) in m.iter() {
+                let key = key.extract::<String>()?;
+                let json_value = py_to_json_value(value)?;
+                map.insert(key, json_value);
+            }
+            Some(map)
+        } else {
+            None
+        };
+        
+        let certificate_opt = certificate.map(Some);
+        
+        let ip_address_opt = ip_address.map(|ip| Some(ip.to_string()));
+        
+        let protocol_opt = protocol.map(|p| Some(p.to_string()));
+        
+        // Create the new response
+        let new_response = self.inner.replace(
+            url_opt,
+            status,
+            headers_opt,
+            body,
+            request_opt,
+            meta_opt,
+            flags,
+            certificate_opt,
+            ip_address_opt,
+            protocol_opt,
+        );
+        
+        Ok(Self {
+            inner: new_response,
+        })
     }
     
     fn __repr__(&self) -> String {
@@ -771,8 +1129,6 @@ impl PySettings {
         format!("PySettings with {} settings", self.inner.all().len())
     }
     
-   
-    
     /// Create a spider from settings
     fn create_spider(&self) -> PyResult<PySpider> {
         let runtime = Runtime::new().map_err(|e| {
@@ -1049,4 +1405,9 @@ impl PyEngineConfig {
         format!("PyEngineConfig(concurrent_requests={}, download_delay_ms={})",
             self.inner.concurrent_requests, self.inner.download_delay_ms)
     }
+}
+
+// Helper function to handle Box<Error> to PyErr conversion
+fn boxed_rs_err_to_py_err(err: Box<scrapy_rs_core::error::Error>) -> PyErr {
+    rs_err_to_py_err(*err)
 } 

@@ -22,7 +22,7 @@ use crate::metrics::MetricsCollector;
 use crate::MonitoringEvent;
 use crate::Result;
 
-/// Monitoring server for RS-Spider
+/// Monitoring server for Scrapy-RS
 pub struct MonitoringServer {
     /// Port to listen on
     port: u16,
@@ -61,7 +61,7 @@ impl MonitoringServer {
         
         // Build router
         let app = Router::new()
-            .route("/", get(|| async { "RS-Spider Monitoring Server" }))
+            .route("/", get(|| async { "Scrapy-RS Monitoring Server" }))
             .route("/metrics", get(metrics_handler))
             .route("/events", get(events_handler))
             .route("/ws", get(ws_handler))
@@ -85,7 +85,7 @@ impl MonitoringServer {
     }
 }
 
-/// Metrics server for RS-Spider
+/// Metrics server for Scrapy-RS
 pub struct MetricsServer {
     /// Port to listen on
     port: u16,

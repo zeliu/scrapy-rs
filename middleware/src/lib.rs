@@ -118,7 +118,7 @@ impl DefaultHeadersMiddleware {
     /// Create a new DefaultHeadersMiddleware with common headers
     pub fn common() -> Self {
         let mut headers = HashMap::new();
-        headers.insert("User-Agent".to_string(), "rs-spider/0.1.0".to_string());
+        headers.insert("User-Agent".to_string(), "scrapy-rs/0.1.0".to_string());
         headers.insert(
             "Accept".to_string(),
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".to_string(),
@@ -1077,6 +1077,10 @@ mod tests {
             body: vec![],
             request: Request::get("https://example.com").unwrap(),
             meta: HashMap::new(),
+            flags: Vec::new(),
+            certificate: None,
+            ip_address: None,
+            protocol: None,
         };
 
         let processed = middleware
@@ -1098,6 +1102,10 @@ mod tests {
             body: vec![],
             request: Request::get("https://example.com").unwrap(),
             meta: HashMap::new(),
+            flags: Vec::new(),
+            certificate: None,
+            ip_address: None,
+            protocol: None,
         };
 
         // First retry

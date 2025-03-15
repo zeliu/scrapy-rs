@@ -223,7 +223,7 @@ pub enum ResponseParseError {
     Other(String),
 }
 
-/// Error types for the RS-Spider framework
+/// Error types for the Scrapy-RS framework
 #[derive(Error, Debug, Clone)]
 pub enum Error {
     /// Error when parsing a URL
@@ -492,7 +492,7 @@ impl Error {
     }
 }
 
-/// Result type for RS-Spider operations
+/// Result type for Scrapy-RS operations
 pub type Result<T> = std::result::Result<T, Box<Error>>;
 
 // Implement From for std::io::Error

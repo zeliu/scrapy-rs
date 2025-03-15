@@ -1,9 +1,0 @@
-README.md
-setup.py
-src/scrapy_rs/__init__.py
-src/scrapy_rs.egg-info/PKG-INFO
-src/scrapy_rs.egg-info/SOURCES.txt
-src/scrapy_rs.egg-info/dependency_links.txt
-src/scrapy_rs.egg-info/not-zip-safe
-src/scrapy_rs.egg-info/requires.txt
-src/scrapy_rs.egg-info/top_level.txt
