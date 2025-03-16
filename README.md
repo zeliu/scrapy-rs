@@ -45,7 +45,7 @@ pip install scrapy_rs
 Or, if you want to install from source:
 
 ```bash
-git clone https://github.com/yourusername/scrapy_rs.git
+git clone https://github.com/liuze/scrapy_rs.git
 cd scrapy_rs/python
 pip install -e .
 ```
