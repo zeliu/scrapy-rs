@@ -21,7 +21,7 @@ use scrapy_rs_pipeline::{PipelineType, JsonFilePipeline, LogPipeline, Pipeline};
 use scrapy_rs_scheduler::{MemoryScheduler, Scheduler};
 use tokio::runtime::Runtime;
 use url::Url;
-use ::scrapy_rs::settings::{Settings as RsSettings, SettingsError};
+use ::scrapy_rs::settings::Settings as RsSettings;
 use ::scrapy_rs::config_adapters::{
     create_spider_from_settings,
     create_downloader_from_settings,
@@ -36,6 +36,15 @@ fn scrapy_rs(_py: Python, m: &PyModule) -> PyResult<()> {
     // Initialize logger
     env_logger::init();
     
+    // Add functions
+    m.add_function(wrap_pyfunction!(hello, m)?)?;
+    m.add_function(wrap_pyfunction!(find_scrapy_rs_executable, m)?)?;
+    m.add_function(wrap_pyfunction!(startproject, m)?)?;
+    m.add_function(wrap_pyfunction!(genspider, m)?)?;
+    m.add_function(wrap_pyfunction!(crawl, m)?)?;
+    m.add_function(wrap_pyfunction!(list_spiders, m)?)?;
+    m.add_function(wrap_pyfunction!(version, m)?)?;
+    
     // Add classes
     m.add_class::<PyRequest>()?;
     m.add_class::<PyResponse>()?;
@@ -48,6 +57,9 @@ fn scrapy_rs(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyDownloader>()?;
     m.add_class::<PyScheduler>()?;
     
+    // Add constants
+    m.add("SCRAPY_RS_EXECUTABLE", find_scrapy_rs_executable(_py)?)?;
+    
     Ok(())
 }
 
@@ -59,6 +71,21 @@ fn py_err_to_string(err: PyErr) -> String {
 /// Convert a Rust error to a Python error
 fn rs_err_to_py_err(err: scrapy_rs_core::error::Error) -> PyErr {
     PyRuntimeError::new_err(format!("{}", err))
+}
+
+/// Convert a Box<Error> to a Python error
+fn boxed_rs_err_to_py_err(err: Box<scrapy_rs_core::error::Error>) -> PyErr {
+    rs_err_to_py_err(*err)
+}
+
+/// Convert a URL parse error to a Python error
+fn url_parse_err_to_py_err(err: url::ParseError) -> PyErr {
+    PyValueError::new_err(format!("URL parse error: {}", err))
+}
+
+/// Convert a settings error to a Python error
+fn settings_err_to_py_err(err: ::scrapy_rs::settings::SettingsError) -> PyErr {
+    PyValueError::new_err(format!("Settings error: {}", err))
 }
 
 /// Convert a Python dictionary to a Rust HashMap
@@ -173,23 +200,20 @@ impl PyRequest {
         proxy: Option<&str>
     ) -> PyResult<Self> {
         // Parse the URL
-        let url = Url::parse(url).map_err(|e| {
-            PyValueError::new_err(format!("Invalid URL: {}", e))
-        })?;
+        let url = handle_url_parse(Url::parse(url))?;
         
         // Create a request with the given method
         let mut request = match method {
             Some("POST") => {
                 if let Some(body_data) = body {
-                    Request::post(url.as_str(), body_data.to_vec())
-                        .map_err(rs_err_to_py_err)?
+                    handle_boxed_rs_error(Request::post(url.as_str(), body_data.to_vec()))?
                 } else {
                     return Err(PyValueError::new_err("POST request requires a body"));
                 }
             }
             Some("PUT") => {
                 if let Some(body_data) = body {
-                    let mut req = Request::get(url.as_str()).map_err(rs_err_to_py_err)?;
+                    let mut req = handle_boxed_rs_error(Request::get(url.as_str()))?;
                     req.method = scrapy_rs_core::request::Method::PUT;
                     req.body = Some(body_data.to_vec());
                     req
@@ -198,23 +222,23 @@ impl PyRequest {
                 }
             }
             Some("DELETE") => {
-                let mut req = Request::get(url.as_str()).map_err(rs_err_to_py_err)?;
+                let mut req = handle_boxed_rs_error(Request::get(url.as_str()))?;
                 req.method = scrapy_rs_core::request::Method::DELETE;
                 req
             }
             Some("HEAD") => {
-                let mut req = Request::get(url.as_str()).map_err(rs_err_to_py_err)?;
+                let mut req = handle_boxed_rs_error(Request::get(url.as_str()))?;
                 req.method = scrapy_rs_core::request::Method::HEAD;
                 req
             }
             Some("OPTIONS") => {
-                let mut req = Request::get(url.as_str()).map_err(rs_err_to_py_err)?;
+                let mut req = handle_boxed_rs_error(Request::get(url.as_str()))?;
                 req.method = scrapy_rs_core::request::Method::OPTIONS;
                 req
             }
             Some("PATCH") => {
                 if let Some(body_data) = body {
-                    let mut req = Request::get(url.as_str()).map_err(rs_err_to_py_err)?;
+                    let mut req = handle_boxed_rs_error(Request::get(url.as_str()))?;
                     req.method = scrapy_rs_core::request::Method::PATCH;
                     req.body = Some(body_data.to_vec());
                     req
@@ -225,7 +249,7 @@ impl PyRequest {
             Some(m) => {
                 return Err(PyValueError::new_err(format!("Unsupported HTTP method: {}", m)));
             }
-            None => Request::get(url.as_str()).map_err(rs_err_to_py_err)?,
+            None => handle_boxed_rs_error(Request::get(url.as_str()))?,
         };
         
         // Add headers if provided
@@ -460,7 +484,7 @@ impl PyResponse {
         url,
         status=200,
         headers=None,
-        body=b"",
+        body=None,
         request=None,
         flags=None,
         certificate=None,
@@ -471,18 +495,16 @@ impl PyResponse {
         url: &str,
         status: u16,
         headers: Option<&PyDict>,
-        body: Vec<u8>,
+        body: Option<Vec<u8>>,
         request: Option<&PyRequest>,
         flags: Option<Vec<String>>,
         certificate: Option<Vec<u8>>,
         ip_address: Option<&str>,
         protocol: Option<&str>,
-        py: Python,
+        _py: Python,
     ) -> PyResult<Self> {
-        // Parse URL
-        let parsed_url = Url::parse(url).map_err(|e| {
-            PyValueError::new_err(format!("Invalid URL: {}", e))
-        })?;
+        // Parse URL - no need to save the parsing result, just verify that the URL is valid
+        handle_url_parse(Url::parse(url))?;
         
         // Convert headers
         let mut headers_map = HashMap::new();
@@ -497,11 +519,12 @@ impl PyResponse {
         // Get request or create a default one
         let req = match request {
             Some(r) => r.inner.clone(),
-            None => Request::get(url).map_err(rs_err_to_py_err)?,
+            None => handle_boxed_rs_error(Request::get(url))?,
         };
         
-        // Create the response
-        let mut response = Response::new(req, status, headers_map, body);
+        // Create the response with body or empty body
+        let body_data = body.unwrap_or_else(|| Vec::new());
+        let mut response = Response::new(req, status, headers_map, body_data);
         
         // Add flags if provided
         if let Some(f) = flags {
@@ -558,12 +581,12 @@ impl PyResponse {
     
     /// Get the body of the response as text
     fn text(&self) -> PyResult<String> {
-        self.inner.text().map_err(rs_err_to_py_err)
+        handle_boxed_rs_error(self.inner.text())
     }
     
     /// Get the body of the response as JSON
     fn json(&self, py: Python) -> PyResult<PyObject> {
-        let value: serde_json::Value = self.inner.json().map_err(rs_err_to_py_err)?;
+        let value: serde_json::Value = handle_boxed_rs_error(self.inner.json())?;
         json_to_py(py, &value)
     }
     
@@ -634,19 +657,19 @@ impl PyResponse {
     
     /// Join this response's URL with a relative URL
     fn urljoin(&self, url: &str) -> PyResult<String> {
-        let joined_url = self.inner.urljoin(url).map_err(rs_err_to_py_err)?;
+        let joined_url = handle_boxed_rs_error(self.inner.urljoin(url))?;
         Ok(joined_url.to_string())
     }
     
     /// Create a new request from a URL found in this response
     fn follow(&self, url: &str) -> PyResult<PyRequest> {
-        let request = self.inner.follow(url).map_err(rs_err_to_py_err)?;
+        let request = handle_boxed_rs_error(self.inner.follow(url))?;
         Ok(PyRequest { inner: request })
     }
     
     /// Create multiple requests from URLs found in this response
     fn follow_all(&self, urls: Vec<&str>) -> PyResult<Vec<PyRequest>> {
-        let requests = self.inner.follow_all(urls).map_err(rs_err_to_py_err)?;
+        let requests = handle_boxed_rs_error(self.inner.follow_all(urls))?;
         Ok(requests.into_iter().map(|req| PyRequest { inner: req }).collect())
     }
     
@@ -682,13 +705,11 @@ impl PyResponse {
         certificate: Option<Vec<u8>>,
         ip_address: Option<&str>,
         protocol: Option<&str>,
-        py: Python,
+        _py: Python,
     ) -> PyResult<Self> {
         // Convert Python types to Rust types
         let url_opt = if let Some(u) = url {
-            Some(Url::parse(u).map_err(|e| {
-                PyValueError::new_err(format!("Invalid URL: {}", e))
-            })?)
+            Some(handle_url_parse(Url::parse(u))?)
         } else {
             None
         };
@@ -824,9 +845,7 @@ impl PySpider {
             spider = spider.with_allowed_domains(domains);
         }
         
-        let runtime = Runtime::new().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create Tokio runtime: {}", e))
-        })?;
+        let runtime = Runtime::new()?;
         
         Ok(Self {
             inner: Arc::new(spider),
@@ -854,8 +873,9 @@ impl PySpider {
     
     /// Parse a response (this is a simple implementation that returns no items or requests)
     fn parse(&self, response: &PyResponse) -> PyResult<(Vec<PyItem>, Vec<PyRequest>)> {
-        let parse_output = self.runtime.block_on(self.inner.parse(response.inner.clone()))
-            .map_err(rs_err_to_py_err)?;
+        let parse_output = handle_boxed_rs_error(
+            self.runtime.block_on(self.inner.parse(response.inner.clone()))
+        )?;
         
         let items = parse_output.items.into_iter()
             .map(|item| {
@@ -891,14 +911,11 @@ impl PyEngine {
         downloader: Option<&PyDownloader>,
         scheduler: Option<&PyScheduler>,
     ) -> PyResult<Self> {
-        let runtime = Runtime::new().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create Tokio runtime: {}", e))
-        })?;
+        let runtime = Runtime::new()?;
         
         let engine = runtime.block_on(async {
             // Create basic engine
-            let mut engine = Engine::new(spider.inner.clone())
-                .map_err(rs_err_to_py_err)?;
+            let mut engine = handle_boxed_rs_error(Engine::new(spider.inner.clone()))?;
             
             // Apply configuration if provided
             if let Some(config) = config {
@@ -945,8 +962,7 @@ impl PyEngine {
     
     /// Run the engine
     fn run(&mut self) -> PyResult<PyEngineStats> {
-        let stats = self.runtime.block_on(self.inner.run())
-            .map_err(rs_err_to_py_err)?;
+        let stats = handle_boxed_rs_error(self.runtime.block_on(self.inner.run()))?;
         
         Ok(PyEngineStats { inner: stats })
     }
@@ -1037,8 +1053,7 @@ impl PySettings {
     /// Load settings from a file
     #[staticmethod]
     fn from_file(path: &str) -> PyResult<Self> {
-        let settings = RsSettings::from_file(path)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to load settings: {}", e)))?;
+        let settings = handle_settings_error(RsSettings::from_file(path))?;
         
         Ok(Self {
             inner: settings,
@@ -1120,8 +1135,8 @@ impl PySettings {
     
     /// Save settings to a file
     fn save(&self, path: &str) -> PyResult<()> {
-        self.inner.save(path)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to save settings: {}", e)))
+        handle_settings_error(self.inner.save(path))?;
+        Ok(())
     }
     
     /// String representation
@@ -1131,12 +1146,9 @@ impl PySettings {
     
     /// Create a spider from settings
     fn create_spider(&self) -> PyResult<PySpider> {
-        let runtime = Runtime::new().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create Tokio runtime: {}", e))
-        })?;
+        let runtime = Runtime::new()?;
         
-        let spider = create_spider_from_settings(&self.inner)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create spider: {}", e)))?;
+        let spider = handle_settings_error(create_spider_from_settings(&self.inner))?;
         
         Ok(PySpider {
             inner: spider,
@@ -1146,37 +1158,30 @@ impl PySettings {
     
     /// Create a downloader from settings
     fn create_downloader(&self) -> PyResult<PyDownloader> {
-        let downloader = create_downloader_from_settings(&self.inner)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create downloader: {}", e)))?;
+        let downloader = handle_settings_error(create_downloader_from_settings(&self.inner))?;
         
         Ok(PyDownloader { inner: downloader })
     }
     
     /// Create a scheduler from settings
     fn create_scheduler(&self) -> PyResult<PyScheduler> {
-        let scheduler = create_scheduler_from_settings(&self.inner)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create scheduler: {}", e)))?;
+        let scheduler = handle_settings_error(create_scheduler_from_settings(&self.inner))?;
         
         Ok(PyScheduler { inner: scheduler })
     }
     
     /// Create an engine from settings
     fn create_engine(&self, spider: &PySpider) -> PyResult<PyEngine> {
-        let runtime = Runtime::new().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create Tokio runtime: {}", e))
-        })?;
+        let runtime = Runtime::new()?;
         
         // Create configuration
-        let config = engine_config_from_settings(&self.inner)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create engine config: {}", e)))?;
+        let config = handle_settings_error(engine_config_from_settings(&self.inner))?;
         
         // Create downloader
-        let downloader = create_downloader_from_settings(&self.inner)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create downloader: {}", e)))?;
+        let downloader = handle_settings_error(create_downloader_from_settings(&self.inner))?;
         
         // Create scheduler
-        let scheduler = create_scheduler_from_settings(&self.inner)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create scheduler: {}", e)))?;
+        let scheduler = handle_settings_error(create_scheduler_from_settings(&self.inner))?;
         
         // Create pipeline
         let pipeline = Arc::new(LogPipeline::info());
@@ -1278,8 +1283,7 @@ impl PyDownloader {
             None => DownloaderConfig::default(),
         };
         
-        let downloader = HttpDownloader::new(config)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create downloader: {}", e)))?;
+        let downloader = handle_boxed_rs_error(HttpDownloader::new(config))?;
         
         Ok(Self {
             inner: Arc::new(downloader),
@@ -1295,7 +1299,7 @@ impl PyDownloader {
 /// Python wrapper for Scheduler
 #[pyclass]
 struct PyScheduler {
-    inner: Arc<MemoryScheduler>,
+    inner: Arc<dyn Scheduler>,
 }
 
 #[pymethods]
@@ -1407,7 +1411,246 @@ impl PyEngineConfig {
     }
 }
 
-// Helper function to handle Box<Error> to PyErr conversion
-fn boxed_rs_err_to_py_err(err: Box<scrapy_rs_core::error::Error>) -> PyErr {
-    rs_err_to_py_err(*err)
+/// A simple function that returns a greeting
+#[pyfunction]
+fn hello() -> PyResult<String> {
+    Ok("Hello from Rust extension!".to_string())
+}
+
+/// Find the scrapy_rs executable
+#[pyfunction]
+fn find_scrapy_rs_executable(py: Python) -> PyResult<String> {
+    // Import os, sys, subprocess, and pathlib.Path
+    let os = py.import("os")?;
+    let sys = py.import("sys")?;
+    let subprocess = py.import("subprocess")?;
+    let pathlib = py.import("pathlib")?;
+    let path_class = pathlib.getattr("Path")?;
+    
+    // Check environment variable
+    if let Ok(executable) = os.getattr("environ")?.get_item("SCRAPY_RS_EXECUTABLE") {
+        return Ok(executable.extract()?);
+    }
+    
+    // Check current Python environment's bin directory
+    let executable = sys.getattr("executable")?;
+    let bin_dir = path_class.call1((executable,))?.getattr("parent")?;
+    let scrapy_rs_path = bin_dir.getattr("__truediv__")?.call1(("scrapy_rs",))?;
+    
+    if scrapy_rs_path.getattr("exists")?.call0()?.extract::<bool>()? {
+        return Ok(scrapy_rs_path.call_method0("__str__")?.extract()?);
+    }
+    
+    // Check hardcoded paths for development
+    let hardcoded_paths = vec![
+        "/Users/liuze/codes/scrapy-rs/target/debug/scrapy_rs",
+        "/Users/liuze/codes/scrapy-rs/target/release/scrapy_rs",
+    ];
+    
+    for path in hardcoded_paths {
+        let path_obj = path_class.call1((path,))?;
+        if path_obj.getattr("exists")?.call0()?.extract::<bool>()? {
+            return Ok(path.to_string());
+        }
+    }
+    
+    // Try to find in PATH
+    let result = subprocess.getattr("run")?.call(
+        (
+            vec!["which", "scrapy_rs"],
+            vec![("capture_output", true), ("text", true), ("check", true)],
+        ),
+        None,
+    );
+    
+    if let Ok(result) = result {
+        let stdout = result.getattr("stdout")?;
+        let stripped = stdout.call_method0("strip")?;
+        return Ok(stripped.extract()?);
+    }
+    
+    // Return empty string if not found
+    Ok("".to_string())
+}
+
+/// Create a new Scrapy-RS project
+#[pyfunction]
+fn startproject(name: &str, directory: Option<&str>) -> PyResult<()> {
+    let executable = Python::with_gil(|py| find_scrapy_rs_executable(py))?;
+    if executable.is_empty() {
+        return Err(PyValueError::new_err("Could not find scrapy_rs executable"));
+    }
+    
+    let mut args = vec![executable, "startproject".to_string(), name.to_string()];
+    
+    if let Some(dir) = directory {
+        args.push("--directory".to_string());
+        args.push(dir.to_string());
+    }
+    
+    // Run the command
+    let status = std::process::Command::new(&args[0])
+        .args(&args[1..])
+        .status()
+        .map_err(|e| PyValueError::new_err(format!("Failed to run command: {}", e)))?;
+    
+    if !status.success() {
+        return Err(PyValueError::new_err(format!("Command failed with exit code: {}", status)));
+    }
+    
+    Ok(())
+}
+
+/// Generate a new spider
+#[pyfunction]
+fn genspider(name: &str, domain: &str, template: Option<&str>) -> PyResult<()> {
+    let executable = Python::with_gil(|py| find_scrapy_rs_executable(py))?;
+    if executable.is_empty() {
+        return Err(PyValueError::new_err("Could not find scrapy_rs executable"));
+    }
+    
+    let mut args = vec![executable, "genspider".to_string(), name.to_string(), domain.to_string()];
+    
+    if let Some(tmpl) = template {
+        args.push("--template".to_string());
+        args.push(tmpl.to_string());
+    }
+    
+    // Run the command
+    let status = std::process::Command::new(&args[0])
+        .args(&args[1..])
+        .status()
+        .map_err(|e| PyValueError::new_err(format!("Failed to run command: {}", e)))?;
+    
+    if !status.success() {
+        return Err(PyValueError::new_err(format!("Command failed with exit code: {}", status)));
+    }
+    
+    Ok(())
+}
+
+/// Run a spider
+#[pyfunction]
+fn crawl(spider_name: &str, args: Vec<String>) -> PyResult<()> {
+    let executable = Python::with_gil(|py| find_scrapy_rs_executable(py))?;
+    if executable.is_empty() {
+        return Err(PyValueError::new_err("Could not find scrapy_rs executable"));
+    }
+    
+    let mut cmd_args = vec![executable, "crawl".to_string(), spider_name.to_string()];
+    cmd_args.extend(args);
+    
+    // Run the command
+    let status = std::process::Command::new(&cmd_args[0])
+        .args(&cmd_args[1..])
+        .status()
+        .map_err(|e| PyValueError::new_err(format!("Failed to run command: {}", e)))?;
+    
+    if !status.success() {
+        return Err(PyValueError::new_err(format!("Command failed with exit code: {}", status)));
+    }
+    
+    Ok(())
+}
+
+/// List available spiders
+#[pyfunction]
+fn list_spiders() -> PyResult<Vec<String>> {
+    let executable = Python::with_gil(|py| find_scrapy_rs_executable(py))?;
+    if executable.is_empty() {
+        return Err(PyValueError::new_err("Could not find scrapy_rs executable"));
+    }
+    
+    let args = vec![executable, "list".to_string()];
+    
+    // Run the command
+    let output = std::process::Command::new(&args[0])
+        .args(&args[1..])
+        .output()
+        .map_err(|e| PyValueError::new_err(format!("Failed to run command: {}", e)))?;
+    
+    if !output.status.success() {
+        return Err(PyValueError::new_err(format!("Command failed with exit code: {}", output.status)));
+    }
+    
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|e| PyValueError::new_err(format!("Failed to parse command output: {}", e)))?;
+    
+    let spiders = stdout.trim().split('\n').map(|s| s.to_string()).collect();
+    
+    Ok(spiders)
+}
+
+/// Get version information
+#[pyfunction]
+fn version() -> PyResult<String> {
+    let executable = Python::with_gil(|py| find_scrapy_rs_executable(py))?;
+    if executable.is_empty() {
+        return Err(PyValueError::new_err("Could not find scrapy_rs executable"));
+    }
+    
+    let args = vec![executable, "version".to_string()];
+    
+    // Run the command
+    let output = std::process::Command::new(&args[0])
+        .args(&args[1..])
+        .output()
+        .map_err(|e| PyValueError::new_err(format!("Failed to run command: {}", e)))?;
+    
+    if !output.status.success() {
+        return Err(PyValueError::new_err(format!("Command failed with exit code: {}", output.status)));
+    }
+    
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|e| PyValueError::new_err(format!("Failed to parse command output: {}", e)))?;
+    
+    Ok(stdout.trim().to_string())
+}
+
+// Create wrapper types to handle errors
+struct RsError(scrapy_rs_core::error::Error);
+struct BoxedRsError(Box<scrapy_rs_core::error::Error>);
+struct UrlParseError(url::ParseError);
+struct SettingsErrorWrapper(::scrapy_rs::settings::SettingsError);
+
+// Implement From trait for wrapper types
+impl From<RsError> for PyErr {
+    fn from(err: RsError) -> Self {
+        PyRuntimeError::new_err(format!("{}", err.0))
+    }
+}
+
+impl From<BoxedRsError> for PyErr {
+    fn from(err: BoxedRsError) -> Self {
+        PyRuntimeError::new_err(format!("{}", err.0))
+    }
+}
+
+impl From<UrlParseError> for PyErr {
+    fn from(err: UrlParseError) -> Self {
+        PyValueError::new_err(format!("URL parse error: {}", err.0))
+    }
+}
+
+impl From<SettingsErrorWrapper> for PyErr {
+    fn from(err: SettingsErrorWrapper) -> Self {
+        PyValueError::new_err(format!("Settings error: {}", err.0))
+    }
+}
+
+// Modify helper functions to use wrapper types
+fn handle_url_parse<T>(result: Result<T, url::ParseError>) -> PyResult<T> {
+    result.map_err(|e| UrlParseError(e).into())
+}
+
+fn handle_settings_error<T>(result: Result<T, ::scrapy_rs::settings::SettingsError>) -> PyResult<T> {
+    result.map_err(|e| SettingsErrorWrapper(e).into())
+}
+
+fn handle_rs_error<T>(result: Result<T, scrapy_rs_core::error::Error>) -> PyResult<T> {
+    result.map_err(|e| RsError(e).into())
+}
+
+fn handle_boxed_rs_error<T>(result: Result<T, Box<scrapy_rs_core::error::Error>>) -> PyResult<T> {
+    result.map_err(|e| BoxedRsError(e).into())
 } 

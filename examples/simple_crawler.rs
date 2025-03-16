@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
     let mut headers = HashMap::new();
     headers.insert(
         "User-Agent".to_string(),
-        "Scrapy-RS/0.1.0 (+https://github.com/yourusername/scrapy-rs)".to_string(),
+        "Scrapy-RS/0.1.0 (+https://github.com/liuze/scrapy-rs)".to_string(),
     );
     request_middleware.add(DefaultHeadersMiddleware::new(headers));
 
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
     // Create a downloader
     let downloader_config = DownloaderConfig {
         concurrent_requests: 2,
-        user_agent: "Scrapy-RS/0.1.0 (+https://github.com/yourusername/scrapy-rs)".to_string(),
+        user_agent: "Scrapy-RS/0.1.0 (+https://github.com/liuze/scrapy-rs)".to_string(),
         timeout: 30,
         retry_enabled: true,
         max_retries: 3,
