@@ -1,68 +1,60 @@
-# Scrapy-RS Python Bindings
+# Scrapy-RS
 
-Python bindings for Scrapy-RS, a high-performance web crawler written in Rust.
-
-## Overview
-
-Scrapy-RS is a web crawling and scraping framework written in Rust, designed for high performance and efficiency. These Python bindings allow you to use Scrapy-RS from Python, combining the speed of Rust with the ease of use and extensive ecosystem of Python.
-
-## Features
-
-- High-performance web crawling powered by Rust
-- Familiar Python API similar to Scrapy
-- Fallback implementation for environments where the Rust extension cannot be built
-- Seamless integration with Python's async/await syntax
+Python bindings for the Scrapy-RS web crawler, a high-performance web crawler written in Rust.
 
 ## Installation
 
-For detailed installation instructions, please refer to:
+You can install Scrapy-RS using pip:
 
-- [Comprehensive Installation Guide](INSTALL.md) - Complete guide with explanations and troubleshooting
-- [Quick Installation Guide](QUICK_INSTALL.md) - Streamlined steps for quick setup
+```bash
+pip install scrapy-rs
+```
 
-## Basic Usage
+### Binary Wheels
+
+Pre-built binary wheels are available for:
+- Windows (x86_64)
+- macOS (x86_64, arm64)
+- Linux (x86_64)
+
+For other platforms, pip will attempt to build from source, which requires:
+- Rust compiler (1.70+)
+- Python development headers (3.9+)
+
+## Usage
+
+### Creating a Project
 
 ```python
 import scrapy_rs
 
-# Print the version
-print(scrapy_rs.__version__)
-
-# Use the hello function
-greeting = scrapy_rs.hello()
-print(greeting)
+# Create a new project
+scrapy_rs.startproject('myproject', '/path/to/directory')
 ```
 
-## Project Structure
+### Creating a Spider
 
-```
-python/
-├── Cargo.toml          # Rust crate configuration
-├── setup.py            # Python package configuration
-├── INSTALL.md          # Comprehensive installation guide
-├── QUICK_INSTALL.md    # Quick installation guide
-├── README.md           # This file
-└── src/
-    ├── lib.rs          # Rust implementation of Python bindings
-    └── scrapy_rs/      # Python package
-        └── __init__.py # Python module initialization
+```python
+import scrapy_rs
+
+# Create a new spider
+scrapy_rs.genspider('myspider', 'example.com')
 ```
 
-## Development
+### Running a Spider
 
-For development, it's recommended to install the package in development mode:
+```python
+import scrapy_rs
 
-```bash
-pip install -e .
+# Run a spider
+scrapy_rs.crawl('myspider')
 ```
 
-This allows changes to the Python code to be immediately reflected without reinstallation.
+## Features
 
-## License
+- High-performance web crawling powered by Rust
+- Python API compatible with Scrapy
+- Automatic fallback to Python implementation if Rust extension is not available
+- Support for custom middleware and pipelines
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- [Scrapy](https://scrapy.org/) - The Python web crawling framework that inspired this project
-- [PyO3](https://pyo3.rs/) - Rust bindings for Python used in this project 
+ 

@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
 
     let downloader_config = DownloaderConfig {
         concurrent_requests: 5,
-        user_agent: "Scrapy-RS/0.1.0 (+https://github.com/yourusername/scrapy-rs)".to_string(),
+        user_agent: "Scrapy-RS/0.1.0 (+https://github.com/liuze/scrapy-rs)".to_string(),
         timeout: 30,
         retry_enabled: true,
         max_retries: 3,
@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
     let mut headers = HashMap::new();
     headers.insert(
         "User-Agent".to_string(),
-        "Scrapy-RS/0.1.0 (+https://github.com/yourusername/scrapy-rs)".to_string(),
+        "Scrapy-RS/0.1.0 (+https://github.com/liuze/scrapy-rs)".to_string(),
     );
     let mut request_middlewares = ChainedRequestMiddleware::new(vec![]);
     request_middlewares.add(DefaultHeadersMiddleware::new(headers));
@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
         concurrent_requests: 5,
         download_delay_ms: 1000,
         respect_robots_txt: true,
-        user_agent: "Scrapy-RS/0.1.0 (+https://github.com/yourusername/scrapy-rs)".to_string(),
+        user_agent: "Scrapy-RS/0.1.0 (+https://github.com/liuze/scrapy-rs)".to_string(),
         log_requests: true,
         log_items: true,
         log_stats: true,

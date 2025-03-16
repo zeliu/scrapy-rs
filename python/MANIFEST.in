@@ -1,0 +1,12 @@
+include Cargo.toml
+include Cargo.lock
+include build.rs
+include README.md
+include LICENSE
+recursive-include src *
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.so
+global-exclude *.dylib
+global-exclude *.dll
+global-exclude __pycache__ 
