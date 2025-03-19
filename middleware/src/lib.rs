@@ -956,8 +956,8 @@ pub struct RateLimitMiddleware {
     max_requests: usize,
     /// Time window in seconds
     time_window_secs: u64,
-    /// Request timestamps
-    timestamps: Arc<tokio::sync::Mutex<Vec<Instant>>>,
+    /// Request timestamps - using VecDeque for efficient removal of oldest entries
+    timestamps: Arc<tokio::sync::Mutex<std::collections::VecDeque<Instant>>>,
     /// Priority of this middleware
     priority: MiddlewarePriority,
 }
@@ -968,7 +968,9 @@ impl RateLimitMiddleware {
         Self {
             max_requests,
             time_window_secs,
-            timestamps: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            timestamps: Arc::new(tokio::sync::Mutex::new(
+                std::collections::VecDeque::with_capacity(max_requests),
+            )),
             priority: MiddlewarePriority::High,
         }
     }
@@ -986,29 +988,47 @@ impl RequestMiddleware for RateLimitMiddleware {
         let now = Instant::now();
         let window_duration = Duration::from_secs(self.time_window_secs);
 
-        // Clean up old timestamps and check if we need to wait
-        let mut timestamps = self.timestamps.lock().await;
+        // Optimize lock usage: minimize lock holding time
+        let mut wait_time = None;
+        {
+            // Lock section begins
+            let mut timestamps = self.timestamps.lock().await;
 
-        // Remove timestamps older than the time window
-        timestamps.retain(|t| now.duration_since(*t) < window_duration);
-
-        // If we've reached the maximum number of requests, wait until we can make another
-        if timestamps.len() >= self.max_requests {
-            let oldest = timestamps[0];
-            let time_passed = now.duration_since(oldest);
-
-            if time_passed < window_duration {
-                let wait_time = window_duration - time_passed;
-                debug!("Rate limit reached, waiting for {:?}", wait_time);
-                sleep(wait_time).await;
+            // Remove expired timestamps (earlier than the time window)
+            while let Some(front) = timestamps.front() {
+                if now.duration_since(*front) >= window_duration {
+                    timestamps.pop_front();
+                } else {
+                    break;
+                }
             }
 
-            // Remove the oldest timestamp
-            timestamps.remove(0);
+            // If maximum requests reached, calculate wait time
+            if timestamps.len() >= self.max_requests && !timestamps.is_empty() {
+                let oldest = timestamps[0];
+                let time_passed = now.duration_since(oldest);
+
+                if time_passed < window_duration {
+                    wait_time = Some(window_duration - time_passed);
+                } else {
+                    // This shouldn't happen with the previous cleanup, but just in case
+                    timestamps.pop_front();
+                }
+            }
+
+            // Add current timestamp
+            timestamps.push_back(now);
+            // Lock section ends
         }
 
-        // Add the current timestamp
-        timestamps.push(Instant::now());
+        // Perform waiting outside the lock to reduce lock holding time
+        if let Some(wait_dur) = wait_time {
+            debug!("Rate limit reached, waiting for {:?}", wait_dur);
+            sleep(wait_dur).await;
+
+            // Yield after waiting to allow other tasks to make progress
+            tokio::task::yield_now().await;
+        }
 
         Ok(request)
     }

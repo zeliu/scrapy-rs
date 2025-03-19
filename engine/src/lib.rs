@@ -16,203 +16,23 @@ use scrapy_rs_middleware::{
     RequestMiddleware, ResponseLoggerMiddleware, ResponseMiddleware, RetryMiddleware,
 };
 use scrapy_rs_pipeline::{DummyPipeline, LogPipeline, Pipeline, PipelineType};
-use scrapy_rs_scheduler::{
-    BreadthFirstScheduler, CrawlStrategy, DepthFirstScheduler, DomainGroupScheduler,
-    MemoryScheduler, Scheduler, SchedulerConfig,
-};
-use serde::{Deserialize, Serialize};
+use scrapy_rs_scheduler::Scheduler;
 use tokio::sync::{mpsc, Notify, RwLock};
 use tokio::time::sleep;
 
+// Make these modules public
+pub mod config;
 pub mod resource_control;
+pub mod stats;
+pub mod utils;
+
+// Re-export key types
+pub use config::{EngineConfig, SchedulerType};
 pub use resource_control::{ResourceController, ResourceLimits, ResourceStats};
+pub use stats::{EngineState, EngineStats};
 
-/// Scheduler type to use
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SchedulerType {
-    /// Memory-based scheduler with priority queue
-    Memory,
-    /// Domain-aware scheduler with per-domain queues
-    DomainGroup,
-    /// Breadth-first search scheduler
-    BreadthFirst,
-    /// Depth-first search scheduler
-    DepthFirst,
-}
-
-impl Default for SchedulerType {
-    fn default() -> Self {
-        Self::Memory
-    }
-}
-
-/// Configuration for the crawler engine
-#[derive(Debug, Clone)]
-pub struct EngineConfig {
-    /// Maximum number of concurrent requests
-    pub concurrent_requests: usize,
-
-    /// Maximum number of items to process concurrently
-    pub concurrent_items: usize,
-
-    /// Delay between requests in milliseconds
-    pub download_delay_ms: u64,
-
-    /// Maximum number of requests per domain
-    pub max_requests_per_domain: Option<usize>,
-
-    /// Maximum number of requests per spider
-    pub max_requests_per_spider: Option<usize>,
-
-    /// Whether to respect robots.txt
-    pub respect_robots_txt: bool,
-
-    /// User agent string
-    pub user_agent: String,
-
-    /// Default request timeout in seconds
-    pub request_timeout: u64,
-
-    /// Whether to retry failed requests
-    pub retry_enabled: bool,
-
-    /// Maximum number of retries
-    pub max_retries: u32,
-
-    /// Whether to follow redirects
-    pub follow_redirects: bool,
-
-    /// Maximum depth to crawl
-    pub max_depth: Option<usize>,
-
-    /// Whether to log requests and responses
-    pub log_requests: bool,
-
-    /// Whether to log items
-    pub log_items: bool,
-
-    /// Whether to log stats
-    pub log_stats: bool,
-
-    /// Interval for logging stats in seconds
-    pub stats_interval_secs: u64,
-
-    /// Type of scheduler to use
-    pub scheduler_type: SchedulerType,
-
-    /// Crawl strategy to use
-    pub crawl_strategy: CrawlStrategy,
-
-    /// Delay between requests to the same domain (in milliseconds)
-    pub domain_delay_ms: Option<u64>,
-
-    /// Resource limits
-    pub resource_limits: ResourceLimits,
-
-    /// Enable resource monitoring
-    pub enable_resource_monitoring: bool,
-}
-
-impl Default for EngineConfig {
-    fn default() -> Self {
-        Self {
-            concurrent_requests: 16,
-            concurrent_items: 100,
-            download_delay_ms: 0,
-            max_requests_per_domain: None,
-            max_requests_per_spider: None,
-            respect_robots_txt: true,
-            user_agent: format!("scrapy_rs/{}", env!("CARGO_PKG_VERSION")),
-            request_timeout: 30,
-            retry_enabled: true,
-            max_retries: 3,
-            follow_redirects: true,
-            max_depth: None,
-            log_requests: true,
-            log_items: true,
-            log_stats: true,
-            stats_interval_secs: 60,
-            scheduler_type: SchedulerType::Memory,
-            crawl_strategy: CrawlStrategy::Priority,
-            domain_delay_ms: None,
-            resource_limits: ResourceLimits::default(),
-            enable_resource_monitoring: false,
-        }
-    }
-}
-
-/// Statistics for the crawler engine
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct EngineStats {
-    /// Number of requests sent
-    pub request_count: usize,
-
-    /// Number of responses received
-    pub response_count: usize,
-
-    /// Number of items scraped
-    pub item_count: usize,
-
-    /// Number of errors
-    pub error_count: usize,
-
-    /// Start time of the crawl
-    #[serde(skip)]
-    pub start_time: Option<Instant>,
-
-    /// End time of the crawl
-    #[serde(skip)]
-    pub end_time: Option<Instant>,
-
-    /// Duration in seconds (for serialization)
-    #[serde(skip_deserializing)]
-    pub duration_secs: Option<f64>,
-}
-
-impl EngineStats {
-    /// Get the duration of the crawl
-    pub fn duration(&self) -> Option<Duration> {
-        match (self.start_time, self.end_time) {
-            (Some(start), Some(end)) => Some(end.duration_since(start)),
-            (Some(start), None) => Some(Instant::now().duration_since(start)),
-            _ => None,
-        }
-    }
-
-    /// Get the requests per second
-    pub fn requests_per_second(&self) -> Option<f64> {
-        self.duration().map(|duration| {
-            let secs = duration.as_secs_f64();
-            if secs > 0.0 {
-                self.request_count as f64 / secs
-            } else {
-                0.0
-            }
-        })
-    }
-
-    /// Prepare for serialization
-    pub fn prepare_for_serialization(&mut self) {
-        if let Some(duration) = self.duration() {
-            self.duration_secs = Some(duration.as_secs_f64());
-        }
-    }
-
-    /// Restore after deserialization
-    pub fn after_deserialization(&mut self) {
-        // Set start time to current time, so we can continue timing
-        self.start_time = Some(Instant::now());
-        self.end_time = None;
-    }
-}
-
-/// Engine state, used for saving and restoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EngineState {
-    /// Engine statistics
-    pub stats: EngineStats,
-    // More state can be added here
-}
+// Import utility functions
+use crate::utils::create_scheduler;
 
 /// The crawler engine
 pub struct Engine {
@@ -260,6 +80,10 @@ pub struct Engine {
 
     /// Resource controller
     resource_controller: Option<ResourceController>,
+
+    /// Last request time per domain for rate limiting
+    #[allow(dead_code)]
+    domain_last_request: Arc<RwLock<HashMap<String, Instant>>>,
 }
 
 impl Engine {
@@ -268,7 +92,7 @@ impl Engine {
         let config = EngineConfig::default();
 
         // Create the scheduler based on the configuration
-        let scheduler = Self::create_scheduler(&config)?;
+        let scheduler = create_scheduler(&config)?;
 
         // Create the downloader
         let downloader_config = DownloaderConfig {
@@ -329,6 +153,9 @@ impl Engine {
             None
         };
 
+        // Create the last request time per domain for rate limiting
+        let domain_last_request = Arc::new(RwLock::new(HashMap::new()));
+
         Ok(Self {
             spider,
             scheduler,
@@ -345,30 +172,8 @@ impl Engine {
             pause_notify: Arc::new(Notify::new()),
             error_manager,
             resource_controller,
+            domain_last_request,
         })
-    }
-
-    /// Create a scheduler based on the engine configuration
-    fn create_scheduler(config: &EngineConfig) -> Result<Arc<dyn Scheduler>> {
-        match config.scheduler_type {
-            SchedulerType::Memory => Ok(Arc::new(MemoryScheduler::new())),
-            SchedulerType::DomainGroup => {
-                let scheduler_config = SchedulerConfig {
-                    strategy: config.crawl_strategy,
-                    max_requests_per_domain: config.max_requests_per_domain,
-                    domain_delay_ms: config.domain_delay_ms,
-                    domain_whitelist: None,
-                    domain_blacklist: None,
-                    respect_depth: true,
-                    max_depth: config.max_depth,
-                };
-                Ok(Arc::new(DomainGroupScheduler::new(scheduler_config)))
-            }
-            SchedulerType::BreadthFirst => {
-                Ok(Arc::new(BreadthFirstScheduler::new(config.max_depth)))
-            }
-            SchedulerType::DepthFirst => Ok(Arc::new(DepthFirstScheduler::new(config.max_depth))),
-        }
     }
 
     /// Create a new engine with custom components
@@ -397,6 +202,9 @@ impl Engine {
             None
         };
 
+        // Create the last request time per domain for rate limiting
+        let domain_last_request = Arc::new(RwLock::new(HashMap::new()));
+
         Self {
             spider,
             scheduler,
@@ -413,6 +221,7 @@ impl Engine {
             pause_notify: Arc::new(Notify::new()),
             error_manager,
             resource_controller,
+            domain_last_request,
         }
     }
 

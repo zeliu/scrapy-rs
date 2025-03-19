@@ -26,4 +26,4 @@ ITEM_PIPELINES = {
 # Enable or disable redirect follows
 REDIRECT_ENABLED = True
 
-# 其他设置会在运行时被添加 
+# Additional settings will be added at runtime 

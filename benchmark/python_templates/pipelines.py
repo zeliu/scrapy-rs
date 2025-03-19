@@ -7,7 +7,7 @@ class BenchmarkPipeline:
     """
     def __init__(self):
         self.items = []
-        # 以下内容会在运行时被替换
+        # This content will be replaced at runtime
         self.output_dir = None
         self.output_file = None
         
