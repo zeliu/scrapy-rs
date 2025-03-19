@@ -66,15 +66,15 @@ impl ScrapyBenchmarkRunner {
 
     /// Copy template files to the temporary directory
     fn copy_template_files(&self) -> io::Result<()> {
-        // 创建必要的目录
+        // Create necessary directories
         let project_dir = self.temp_dir.join("benchmark");
         let spiders_dir = project_dir.join("spiders");
         fs::create_dir_all(&spiders_dir)?;
 
-        // 获取模板目录路径
+        // Get template directory path
         let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("python_templates");
 
-        // 复制文件
+        // Copy files
         fs::copy(
             template_dir.join("__init__.py"),
             project_dir.join("__init__.py"),
@@ -89,7 +89,7 @@ impl ScrapyBenchmarkRunner {
             project_dir.join("pipelines.py"),
         )?;
 
-        // 复制蜘蛛文件
+        // Copy spider files
         fs::copy(
             template_dir.join("spiders").join("__init__.py"),
             spiders_dir.join("__init__.py"),
@@ -99,7 +99,7 @@ impl ScrapyBenchmarkRunner {
             spiders_dir.join("benchmark_spider.py"),
         )?;
 
-        // 复制主文件
+        // Copy main file
         fs::copy(template_dir.join("main.py"), self.temp_dir.join("main.py"))?;
 
         Ok(())
@@ -107,19 +107,19 @@ impl ScrapyBenchmarkRunner {
 
     /// Create a Scrapy project
     fn create_project(&self) -> io::Result<()> {
-        // 创建临时目录
+        // Create temporary directory
         fs::create_dir_all(&self.temp_dir)?;
 
-        // 复制模板文件
+        // Copy template files
         self.copy_template_files()?;
 
-        // 修改设置文件
+        // Modify settings file
         self.update_settings()?;
 
-        // 修改蜘蛛文件
+        // Modify spider file
         self.update_spider()?;
 
-        // 修改管道文件
+        // Modify pipeline file
         self.update_pipeline()?;
 
         Ok(())
@@ -130,7 +130,7 @@ impl ScrapyBenchmarkRunner {
         let settings_path = self.temp_dir.join("benchmark").join("settings.py");
         let content = fs::read_to_string(&settings_path)?;
 
-        // 替换设置
+        // Replace settings
         let content = content.replace(
             "ROBOTSTXT_OBEY = True",
             &format!("ROBOTSTXT_OBEY = {}", self.scenario.respect_robots_txt),
@@ -158,7 +158,7 @@ impl ScrapyBenchmarkRunner {
             &format!("REDIRECT_ENABLED = {}", self.scenario.follow_redirects),
         );
 
-        // 添加其他设置
+        // Add other settings
         let mut additional_settings = String::new();
         for (key, value) in &self.scenario.settings {
             additional_settings.push_str(&format!("{} = '{}'\n", key, value));
@@ -168,7 +168,7 @@ impl ScrapyBenchmarkRunner {
             &additional_settings,
         );
 
-        // 写回文件
+        // Write back file
         fs::write(settings_path, content)?;
 
         Ok(())
@@ -183,7 +183,7 @@ impl ScrapyBenchmarkRunner {
             .join("benchmark_spider.py");
         let content = fs::read_to_string(&spider_path)?;
 
-        // 替换起始URL、页面限制和深度限制
+        // Replace start URL, page limit, and depth limit
         let content = content.replace(
             "self.start_urls = []",
             &format!("self.start_urls = {}", self.format_urls()),
@@ -197,7 +197,7 @@ impl ScrapyBenchmarkRunner {
             &format!("self.max_depth = {}", self.scenario.max_depth),
         );
 
-        // 写回文件
+        // Write back file
         fs::write(spider_path, content)?;
 
         Ok(())
@@ -208,7 +208,7 @@ impl ScrapyBenchmarkRunner {
         let pipeline_path = self.temp_dir.join("benchmark").join("pipelines.py");
         let content = fs::read_to_string(&pipeline_path)?;
 
-        // 替换输出目录和文件
+        // Replace output directory and file
         let mut updated_content = content.clone();
 
         if let Some(dir) = &self.output_dir {
@@ -223,7 +223,7 @@ impl ScrapyBenchmarkRunner {
             updated_content = updated_content.replace("self.output_file = None", &output_file_line);
         }
 
-        // 写回文件
+        // Write back file
         fs::write(pipeline_path, updated_content)?;
 
         Ok(())

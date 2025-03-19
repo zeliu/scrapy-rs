@@ -19,15 +19,15 @@ class BenchmarkSpider(scrapy.Spider):
 
     def __init__(self, *args, **kwargs):
         super(BenchmarkSpider, self).__init__(*args, **kwargs)
-        self.start_urls = []  # 这里会在运行时被替换为实际的URL列表
-        self.page_count = 0
-        self.max_pages = 100  # 这里会在运行时被替换为实际的页面限制
-        self.max_depth = 2    # 这里会在运行时被替换为实际的深度限制
+        self.start_urls = []  # This will be replaced with actual URLs at runtime
+        self.crawled_count = 0
+        self.max_pages = 100  # This will be replaced with actual page limit at runtime
+        self.max_depth = 2    # This will be replaced with actual depth limit at runtime
 
     def parse(self, response):
         # Check if we've reached the page limit
-        self.page_count += 1
-        if self.page_count > self.max_pages:
+        self.crawled_count += 1
+        if self.crawled_count > self.max_pages:
             return
 
         # Extract the title
