@@ -96,44 +96,56 @@ impl ResourceController {
         let mut system = System::new_all();
 
         tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(Duration::from_millis(limits.monitor_interval_ms));
+
             while *running.read().await {
+                // Wait for the next interval using tokio's interval instead of sleep for better scheduling
+                interval.tick().await;
+
                 // Refresh system information
                 system.refresh_all();
+
+                // Yield to the scheduler occasionally to ensure fairness
+                tokio::task::yield_now().await;
 
                 // Get process information
                 if let Some(process) = system.process(Pid::from_u32(pid)) {
                     let memory_usage = process.memory();
                     let cpu_usage = process.cpu_usage();
 
-                    // Update stats
-                    let mut stats_write = stats.write().await;
-                    stats_write.memory_usage = memory_usage;
-                    stats_write.cpu_usage = cpu_usage;
-                    stats_write.last_update = Some(Instant::now());
+                    // Optimization: Only lock stats when necessary, and minimize lock holding time
+                    let (active_tasks, pending_requests) = {
+                        let stats_read = stats.read().await;
+                        (stats_read.active_tasks, stats_read.pending_requests)
+                    };
 
-                    // Check limits and apply throttling if needed
+                    // Check if throttling needs to be applied, without locking stats again
                     let throttle = (limits.max_memory > 0 && memory_usage > limits.max_memory)
                         || (limits.max_cpu > 0.0 && cpu_usage > limits.max_cpu)
-                        || (limits.max_tasks > 0 && stats_write.active_tasks > limits.max_tasks)
+                        || (limits.max_tasks > 0 && active_tasks > limits.max_tasks)
                         || (limits.max_pending_requests > 0
-                            && stats_write.pending_requests > limits.max_pending_requests);
+                            && pending_requests > limits.max_pending_requests);
 
-                    drop(stats_write);
+                    // Update stats fields
+                    {
+                        let mut stats_write = stats.write().await;
+                        stats_write.memory_usage = memory_usage;
+                        stats_write.cpu_usage = cpu_usage;
+                        stats_write.last_update = Some(Instant::now());
+                    }
 
                     if throttle {
                         // Log throttling
                         warn!("Resource limits exceeded: memory={}MB, CPU={}%, tasks={}, requests={}. Throttling...",
-                              memory_usage / 1024 / 1024, cpu_usage, stats.read().await.active_tasks, stats.read().await.pending_requests);
+                              memory_usage / 1024 / 1024, cpu_usage, active_tasks, pending_requests);
 
                         // Sleep to throttle
                         let throttle_ms =
                             (limits.monitor_interval_ms as f32 * limits.throttle_factor) as u64;
-                        sleep(Duration::from_millis(throttle_ms)).await;
+                        tokio::time::sleep(Duration::from_millis(throttle_ms)).await;
                     }
                 }
-
-                // Sleep until next check
-                sleep(Duration::from_millis(limits.monitor_interval_ms)).await;
             }
         });
 
@@ -183,6 +195,9 @@ impl ResourceController {
                 (self.limits.monitor_interval_ms as f32 * self.limits.throttle_factor) as u64;
             debug!("Throttling for {}ms", throttle_ms);
             sleep(Duration::from_millis(throttle_ms)).await;
+
+            // add yield to ensure fair scheduling
+            tokio::task::yield_now().await;
         }
     }
 }

@@ -61,7 +61,7 @@ impl ScrapyRsBenchmarkRunner {
 
     /// Create a spider for the benchmark
     fn create_spider(&self) -> Arc<dyn Spider> {
-        // 创建一个自定义的 Spider 实现
+        // Create a custom Spider implementation
         struct BenchmarkSpider {
             name: String,
             urls: Vec<String>,
@@ -181,7 +181,7 @@ impl ScrapyRsBenchmarkRunner {
             user_agent: self.scenario.user_agent.clone(),
             respect_robots_txt: self.scenario.respect_robots_txt,
             follow_redirects: self.scenario.follow_redirects,
-            // 注意：如果 EngineConfig 没有 max_requests 字段，可以使用其他字段或跳过
+            // Note: If EngineConfig doesn't have a max_requests field, use other fields or skip
             // max_requests: Some(self.scenario.page_limit),
             ..Default::default()
         };
@@ -189,7 +189,7 @@ impl ScrapyRsBenchmarkRunner {
         // Create pipeline
         let pipeline: Arc<dyn Pipeline> = if let Some(dir) = &self.output_dir {
             let json_path = format!("{}/items_{}.json", dir, self.name);
-            // 创建 JSON 文件管道
+            // Create JSON file pipeline
             let file_pipeline = JsonFilePipeline::new(&json_path, false);
             Arc::new(file_pipeline)
         } else {
@@ -263,46 +263,52 @@ impl BenchmarkRunner for ScrapyRsBenchmarkRunner {
 
         // If we have a progress bar, update it as the engine runs
         let stats = if let Some(pb) = &progress_bar {
-            // 使用 Arc 和 Mutex 来共享 engine 和 runtime
-            let engine_arc = Arc::new(tokio::sync::Mutex::new(engine));
-            let runtime_arc = Arc::new(runtime);
+            // Create a thread-safe counter that can be shared between threads
+            let request_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let request_count_for_thread = request_count.clone();
 
-            // Create a thread to update the progress bar
+            // Create an atomic boolean indicating whether the engine is still running
+            let engine_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let engine_running_for_thread = engine_running.clone();
+
+            // Update the progress bar in a separate thread
             let pb_clone = pb.clone();
-            let engine_clone = engine_arc.clone();
-            let runtime_clone = runtime_arc.clone();
+            let handle = std::thread::spawn(move || {
+                while engine_running_for_thread.load(std::sync::atomic::Ordering::SeqCst) {
+                    // Get the current request count and update the progress bar
+                    let count = request_count_for_thread.load(std::sync::atomic::Ordering::SeqCst);
+                    pb_clone.set_position(count as u64);
 
-            let handle = std::thread::spawn(move || loop {
-                std::thread::sleep(Duration::from_millis(100));
-
-                let rt = &runtime_clone;
-                let engine_mutex = &engine_clone;
-
-                let is_running = rt.block_on(async {
-                    let engine = engine_mutex.lock().await;
-                    let stats = engine.stats().await;
-                    pb_clone.set_position(stats.request_count as u64);
-                    engine.is_running().await
-                });
-
-                if !is_running {
-                    break;
+                    // Brief sleep to reduce CPU usage
+                    std::thread::sleep(Duration::from_millis(100));
                 }
+
+                // Final progress bar update
+                let final_count =
+                    request_count_for_thread.load(std::sync::atomic::Ordering::SeqCst);
+                pb_clone.set_position(final_count as u64);
             });
 
+            // Create an engine wrapper that will update the counter after each request
+            // To implement this, we need to modify Engine or create a request interceptor
+            // But since we can't directly modify Engine's internals, we'll use the final stats to update the progress bar
+
             // Run the engine
-            let stats = runtime_arc
-                .block_on(async {
-                    let mut engine = engine_arc.lock().await;
-                    engine.run().await
-                })
+            let engine_stats = runtime
+                .block_on(engine.run())
                 .expect("Failed to run engine");
 
-            // Wait for the progress thread to finish
-            handle.join().unwrap();
+            // Engine has stopped running
+            engine_running.store(false, std::sync::atomic::Ordering::SeqCst);
+
+            // Wait for the progress bar thread to complete
+            let _ = handle.join();
+
+            // Make sure the progress bar shows the final state
+            pb.set_position(engine_stats.request_count as u64);
             pb.finish_with_message("Benchmark completed");
 
-            stats
+            engine_stats
         } else {
             // Run the engine without progress updates
             runtime
