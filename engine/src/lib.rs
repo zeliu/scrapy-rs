@@ -164,7 +164,6 @@ impl Engine {
             config.max_active_size_per_domain,
             config.delay_per_domain,
         ));
-
         // Create the last request time per domain for rate limiting
         let domain_last_request = Arc::new(RwLock::new(HashMap::new()));
 
@@ -221,6 +220,7 @@ impl Engine {
             config.delay_per_domain,
         ));
 
+
         // Create the last request time per domain for rate limiting
         let domain_last_request = Arc::new(RwLock::new(HashMap::new()));
 
@@ -241,6 +241,7 @@ impl Engine {
             error_manager,
             resource_controller,
             slot_manager,
+
             domain_last_request,
         }
     }
