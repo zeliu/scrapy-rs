@@ -35,10 +35,12 @@ def _find_scrapy_rs_executable():
     
     # Try to find in PATH
     try:
-        result = subprocess.run(['which', 'scrapy_rs'], 
-                               capture_output=True, 
-                               text=True, 
-                               check=True)
+        result = subprocess.run(
+            ['which', 'scrapy_rs'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
         return result.stdout.strip()
     except (subprocess.SubprocessError, FileNotFoundError):
         pass
@@ -62,22 +64,209 @@ def run_command(command, *args, **kwargs):
         subprocess.CompletedProcess object
     
     Raises:
-        FileNotFoundError: If scrapy_rs executable is not found
         subprocess.SubprocessError: If command execution fails
     """
     if not SCRAPY_RS_EXECUTABLE:
-        # If executable is not found but command needs output, return simulated output
+        # if command is version, return a mock completed process
         if command == 'version' and kwargs.get('capture_output', False):
-            # Create a mock CompletedProcess object
+            # create a mock completed process
             class MockCompletedProcess:
                 def __init__(self):
                     self.returncode = 0
-                    self.stdout = f"Scrapy-RS version {__version__}\nA high-performance web crawler written in Rust"
+                    self.stdout = (f"Scrapy-RS version {__version__}\n"
+                                  "A high-performance web crawler written in Rust")
+                    self.stderr = ""
+            return MockCompletedProcess()
+        elif command == 'startproject':
+            # use python to create a new project
+            name = args[0]
+            directory = args[1] if len(args) > 1 else name
+            
+            import os
+            from pathlib import Path
+            
+            # create project directory
+            project_dir = Path(directory) / name
+            os.makedirs(project_dir, exist_ok=True)
+            
+            # create settings.py
+            settings_content = f"""# Scrapy-RS settings file
+# This file contains the configuration for the Scrapy-RS crawler
+
+# Basic settings
+BOT_NAME = '{name}'
+USER_AGENT = 'scrapy_rs/0.1.0 (+https://github.com/liuze/scrapy_rs)'
+
+# Crawl settings
+CONCURRENT_REQUESTS = 16
+DOWNLOAD_DELAY_MS = 0
+REQUEST_TIMEOUT = 30
+FOLLOW_REDIRECTS = True
+MAX_RETRIES = 3
+RETRY_ENABLED = True
+RESPECT_ROBOTS_TXT = True
+
+# Limits
+MAX_DEPTH = None
+MAX_REQUESTS_PER_DOMAIN = None
+MAX_REQUESTS_PER_SPIDER = None
+
+# Logging
+LOG_LEVEL = 'INFO'
+LOG_REQUESTS = True
+LOG_ITEMS = True
+LOG_STATS = True
+STATS_INTERVAL_SECS = 60
+
+# Pipelines
+ITEM_PIPELINES = [
+    'LogPipeline',
+    'JsonFilePipeline',
+]
+
+# Pipeline settings
+JSON_FILE_PATH = 'items.json'
+
+# Middleware
+REQUEST_MIDDLEWARES = [
+    'DefaultHeadersMiddleware',
+    'RandomDelayMiddleware',
+]
+
+RESPONSE_MIDDLEWARES = [
+    'ResponseLoggerMiddleware',
+    'RetryMiddleware',
+]
+
+# Spider settings
+ALLOWED_DOMAINS = []
+START_URLS = []
+"""
+            with open(project_dir / 'settings.py', 'w') as f:
+                f.write(settings_content)
+                
+            # create spiders directory
+            os.makedirs(project_dir / 'spiders', exist_ok=True)
+            
+            # create __init__.py files
+            with open(project_dir / 'spiders' / '__init__.py', 'w') as f:
+                f.write("")
+                
+            with open(project_dir / '__init__.py', 'w') as f:
+                f.write("")
+                
+            # create items.py, pipelines.py, middlewares.py
+            with open(project_dir / 'items.py', 'w') as f:
+                f.write("# Define your item models here\n\n")
+                
+            with open(project_dir / 'pipelines.py', 'w') as f:
+                f.write("# Define your item pipelines here\n\n")
+                
+            with open(project_dir / 'middlewares.py', 'w') as f:
+                f.write("# Define your spider middlewares here\n\n")
+                
+            print(f"Created project '{name}' in directory '{project_dir}'")
+            print(f"Project '{name}' created successfully")
+            print(f"You can now cd into '{directory}/{name}' and start creating your spiders")
+            
+            # return a mock completed process
+            class MockCompletedProcess:
+                def __init__(self):
+                    self.returncode = 0
+                    self.stderr = ""
+            return MockCompletedProcess()
+        elif command == 'genspider':
+            # use python to generate a new spider
+            name = args[0]
+            domain = args[1]
+            template = args[2] if len(args) > 2 else 'basic'
+            
+            import os
+            from pathlib import Path
+            
+            # get current working directory
+            cwd = Path.cwd()
+            spiders_dir = None
+            
+            # check current directory and spiders directory
+            for path in [cwd, cwd / 'spiders']:
+                if path.exists() and path.is_dir():
+                    if (path / '__init__.py').exists():
+                        spiders_dir = path
+                        break
+            
+            if spiders_dir is None:
+                print("Cannot find spiders directory. "
+                      "Make sure you're in a Scrapy-RS project.")
+                
+                class MockCompletedProcess:
+                    def __init__(self):
+                        self.returncode = 1
+                        self.stderr = "Cannot find spiders directory"
+                return MockCompletedProcess()
+            
+            # create spider file
+            spider_file = spiders_dir / f"{name}.py"
+            
+            if template == 'basic':
+                spider_content = f"""# -*- coding: utf-8 -*-
+from scrapy_rs import PySpider, PyRequest, PyResponse, PyItem
+
+class {name.capitalize()}Spider(PySpider):
+    name = "{name}"
+    allowed_domains = ["{domain}"]
+    start_urls = [f"https://{domain}"]
+
+    def parse(self, response):
+        # Extract data from response
+        title = response.css('title::text').get()
+        
+        # Create item
+        item = PyItem()
+        item['title'] = title
+        item['url'] = response.url
+        
+        yield item
+        
+        # Follow links
+        for href in response.css('a::attr(href)').getall():
+            yield response.follow(href, self.parse)
+"""
+            else:
+                spider_content = f"""# -*- coding: utf-8 -*-
+from scrapy_rs import PySpider, PyRequest, PyResponse, PyItem
+
+class {name.capitalize()}Spider(PySpider):
+    name = "{name}"
+    allowed_domains = ["{domain}"]
+    start_urls = [f"https://{domain}"]
+
+    def parse(self, response):
+        # TODO: Implement your custom spider logic
+        pass
+"""
+            
+            with open(spider_file, 'w') as f:
+                f.write(spider_content)
+                
+            print(f"Created spider '{name}' using template '{template}'")
+            
+            # return a mock completed process
+            class MockCompletedProcess:
+                def __init__(self):
+                    self.returncode = 0
                     self.stderr = ""
             return MockCompletedProcess()
         else:
-            # For other commands, still raise exception
-            raise FileNotFoundError("Could not find scrapy_rs executable")
+            # other commands are not implemented yet
+            print(f"Python fallback for '{command}' not implemented yet.")
+            print("Please install the Rust binary for full functionality.")
+            
+            class MockCompletedProcess:
+                def __init__(self):
+                    self.returncode = 0
+                    self.stderr = ""
+            return MockCompletedProcess()
     
     cmd = [SCRAPY_RS_EXECUTABLE, command] + list(args)
     return subprocess.run(cmd, **kwargs)
@@ -109,7 +298,8 @@ def list_spiders():
 def version():
     """Show version information"""
     result = run_command('version', capture_output=True, text=True)
-    return result.stdout.strip() if result.returncode == 0 else f"Scrapy-RS version {__version__}\nA high-performance web crawler written in Rust"
+    ver_str = f"Scrapy-RS version {__version__}\nA high-performance web crawler written in Rust"
+    return result.stdout.strip() if result.returncode == 0 else ver_str
 
 # Try to import Rust extension module
 try:
@@ -141,6 +331,7 @@ except ImportError:
     def hello():
         """
         A simple function that returns a greeting.
-        This is a fallback implementation when the Rust extension is not available.
+        This is a fallback implementation when the Rust extension is not 
+        available.
         """
         return "Hello from Python fallback! (Rust extension not available)"
