@@ -89,6 +89,12 @@ pub struct EngineConfig {
 
     /// Enable resource monitoring
     pub enable_resource_monitoring: bool,
+
+    /// Maximum active size per domain (bytes)
+    pub max_active_size_per_domain: usize,
+
+    /// Delay between requests per domain (milliseconds)
+    pub delay_per_domain: u64,
 }
 
 impl Default for EngineConfig {
@@ -115,6 +121,8 @@ impl Default for EngineConfig {
             domain_delay_ms: None,
             resource_limits: ResourceLimits::default(),
             enable_resource_monitoring: false,
+            max_active_size_per_domain: 5 * 1024 * 1024, // 5MB by default
+            delay_per_domain: 0,                         // No delay by default
         }
     }
 }
