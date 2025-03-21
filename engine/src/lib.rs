@@ -220,7 +220,6 @@ impl Engine {
             config.delay_per_domain,
         ));
 
-
         // Create the last request time per domain for rate limiting
         let domain_last_request = Arc::new(RwLock::new(HashMap::new()));
 
