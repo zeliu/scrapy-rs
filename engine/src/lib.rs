@@ -23,15 +23,18 @@ use tokio::time::sleep;
 // Make these modules public
 pub mod config;
 pub mod resource_control;
+pub mod slot;
 pub mod stats;
 pub mod utils;
 
 // Re-export key types
 pub use config::{EngineConfig, SchedulerType};
 pub use resource_control::{ResourceController, ResourceLimits, ResourceStats};
+pub use slot::{Slot, SlotManager};
 pub use stats::{EngineState, EngineStats};
 
 // Import utility functions
+use crate::slot::create_request_id;
 use crate::utils::create_scheduler;
 
 /// The crawler engine
@@ -80,6 +83,9 @@ pub struct Engine {
 
     /// Resource controller
     resource_controller: Option<ResourceController>,
+
+    /// Slot manager for controlling domain-specific request processing
+    slot_manager: Arc<SlotManager>,
 
     /// Last request time per domain for rate limiting
     #[allow(dead_code)]
@@ -153,6 +159,12 @@ impl Engine {
             None
         };
 
+        // Create the slot manager
+        let slot_manager = Arc::new(SlotManager::new(
+            config.max_active_size_per_domain,
+            config.delay_per_domain,
+        ));
+
         // Create the last request time per domain for rate limiting
         let domain_last_request = Arc::new(RwLock::new(HashMap::new()));
 
@@ -172,6 +184,7 @@ impl Engine {
             pause_notify: Arc::new(Notify::new()),
             error_manager,
             resource_controller,
+            slot_manager,
             domain_last_request,
         })
     }
@@ -202,6 +215,12 @@ impl Engine {
             None
         };
 
+        // Create the slot manager
+        let slot_manager = Arc::new(SlotManager::new(
+            config.max_active_size_per_domain,
+            config.delay_per_domain,
+        ));
+
         // Create the last request time per domain for rate limiting
         let domain_last_request = Arc::new(RwLock::new(HashMap::new()));
 
@@ -221,6 +240,7 @@ impl Engine {
             pause_notify: Arc::new(Notify::new()),
             error_manager,
             resource_controller,
+            slot_manager,
             domain_last_request,
         }
     }
@@ -518,24 +538,25 @@ impl Engine {
                     // Process the request through middleware
                     let processed_request = match self
                         .request_middlewares
-                        .process_request(request, &*self.spider)
+                        .process_request(request.clone(), &*self.spider)
                         .await
                     {
-                        Ok(req) => req,
+                        Ok(r) => r,
                         Err(e) => {
-                            // Handle error from request middleware
+                            // Request middleware rejected the request
+                            debug!("Request middleware rejected request: {}", e);
+                            let mut stats = self.stats.write().await;
+                            stats.error_count += 1;
+
+                            // Store URL before moving the request
+                            let url = request.url.as_str().to_string();
+
+                            // Handle error from middleware
                             let error_with_context =
                                 Error::other(format!("Request middleware rejected request: {}", e))
                                     .with_component("request_middleware")
+                                    .with_url(url)
                                     .with_spider_name(self.spider.name());
-
-                            // Log the error
-                            error!("Request middleware rejected request: {}", e);
-
-                            warn!("Request middleware rejected request: {}", e);
-
-                            let mut stats = self.stats.write().await;
-                            stats.error_count += 1;
 
                             match self
                                 .error_manager
@@ -586,8 +607,8 @@ impl Engine {
                                 .send_catch_log(
                                     Signal::ErrorOccurred,
                                     SignalArgs::Error(format!(
-                                        "Request middleware rejected request: {}",
-                                        e
+                                        "Error downloading request: {}",
+                                        &e.to_string()
                                     )),
                                 )
                                 .await;
@@ -611,6 +632,22 @@ impl Engine {
                         )
                         .await;
 
+                    // Get the domain from the request
+                    let domain = processed_request
+                        .url
+                        .host_str()
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    // Get or create the slot for this domain
+                    let slot = self.slot_manager.get_slot(&domain).await;
+
+                    // Check if the slot needs throttling
+                    if slot.needs_throttle().await {
+                        debug!("Throttling requests for domain: {}", domain);
+                        sleep(Duration::from_millis(self.config.download_delay_ms)).await;
+                    }
+
                     // Download the request
                     let downloader = self.downloader.clone();
                     let response_middlewares = self.response_middlewares.clone();
@@ -621,6 +658,7 @@ impl Engine {
                     let signals = self.signals.clone();
                     let running = self.running.clone();
                     let error_manager = self.error_manager.clone();
+                    let slot_clone = slot.clone();
 
                     // Add a Notify for pause/resume notification
                     let task_pause_notify = self.pause_notify.clone();
@@ -632,23 +670,62 @@ impl Engine {
                             task_pause_notify.notified().await;
                         }
 
-                        // Download the request
-                        let response = match downloader.download(processed_request.clone()).await {
-                            Ok(resp) => resp,
-                            Err(e) => {
-                                // Handle error from downloader
-                                let error_with_context =
-                                    Error::other(format!("Error downloading request: {}", e))
-                                        .with_component("downloader")
-                                        .with_spider_name(spider.name())
-                                        .with_url(processed_request.url.to_string());
+                        // Add the request to the slot
+                        let _response_rx = slot_clone.add_request(processed_request.clone()).await;
 
-                                // Log the error
+                        // Wait for the slot to process the request
+                        let (request, _) = match slot_clone.next_request().await {
+                            Some(tuple) => tuple,
+                            None => {
+                                // Slot is closing or no request available
+                                warn!(
+                                    "Slot for domain {} is closing or no request available",
+                                    domain
+                                );
+                                return;
+                            }
+                        };
+
+                        // Download the request
+                        let download_result = downloader.download(request.clone()).await;
+                        // Create a unique identifier for the request from its URL
+                        let request_id = create_request_id(&request);
+
+                        // Process the download result
+                        let response = match download_result {
+                            Ok(resp) => {
+                                // Calculate response size
+                                let response_size = resp.body.len();
+
+                                // Finish the request in the slot with the actual response size
+                                slot_clone
+                                    .finish_request(&request_id, Some(response_size))
+                                    .await;
+
+                                resp
+                            }
+                            Err(e) => {
+                                // Finish the request in the slot with no response size
+                                slot_clone.finish_request(&request_id, None).await;
+
+                                // Update stats
+                                {
+                                    let mut stats = stats.write().await;
+                                    stats.error_count += 1;
+                                }
+
                                 error!("Error downloading request: {}", e);
 
-                                let mut stats = stats.write().await;
-                                stats.error_count += 1;
+                                // Store the error message
+                                let error_message = format!("Error downloading request: {}", e);
 
+                                // Create error with context
+                                let error_with_context = e
+                                    .with_component("downloader")
+                                    .with_url(request.url.as_str().to_string())
+                                    .with_spider_name(spider.name());
+
+                                // Handle error
                                 match error_manager
                                     .handle_error(&error_with_context, &*spider)
                                     .await
@@ -696,10 +773,7 @@ impl Engine {
                                 signals
                                     .send_catch_log(
                                         Signal::ErrorOccurred,
-                                        SignalArgs::Error(format!(
-                                            "Error downloading request: {}",
-                                            e
-                                        )),
+                                        SignalArgs::Error(error_message),
                                     )
                                     .await;
 
@@ -1355,6 +1429,7 @@ mod tests {
 
     pub mod error_handling;
     pub mod resource_control_test;
+    pub mod slot_test;
 }
 
 mod mock;

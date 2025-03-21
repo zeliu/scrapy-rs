@@ -61,6 +61,8 @@ pub fn engine_config_from_settings(settings: &Settings) -> Result<EngineConfig> 
             throttle_factor: settings.get("RESOURCE_THROTTLE_FACTOR").unwrap_or(0.5),
             monitor_interval_ms: settings.get("RESOURCE_MONITOR_INTERVAL_MS").unwrap_or(1000),
         },
+        delay_per_domain: settings.get("DELAY_PER_DOMAIN").unwrap_or(0),
+        max_active_size_per_domain: settings.get("MAX_ACTIVE_SIZE_PER_DOMAIN").unwrap_or(5000),
     })
 }
 
