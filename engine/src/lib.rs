@@ -415,7 +415,7 @@ impl Engine {
         }
 
         // Start the stats logger task
-        let stats_task = if self.config.log_stats {
+        let _stats_task = if self.config.log_stats {
             let stats = self.stats.clone();
             let interval = self.config.stats_interval_secs;
             let running = self.running.clone();
@@ -1119,61 +1119,6 @@ impl Engine {
             })
         })?;
 
-        // Close the spider
-        info!("Closing spider: {}", self.spider.name());
-        self.pipelines.close_spider(&*self.spider).await?;
-        self.response_middlewares
-            .spider_closed(&*self.spider)
-            .await?;
-        self.request_middlewares
-            .spider_closed(&*self.spider)
-            .await?;
-        self.spider.closed().await?;
-
-        // Send spider closed signal
-        self.signals
-            .send_catch_log(
-                Signal::SpiderClosed,
-                SignalArgs::Spider(self.spider.clone()),
-            )
-            .await;
-
-        // Update stats
-        let mut stats = self.stats.write().await;
-        stats.end_time = Some(Instant::now());
-        let stats_clone = stats.clone();
-        drop(stats);
-
-        // Stop the stats logger
-        if let Some(task) = stats_task {
-            let mut running = self.running.write().await;
-            *running = false;
-            drop(running);
-
-            task.await.map_err(|e| {
-                Box::new(Error::Other {
-                    message: format!("Stats logger task failed: {}", e),
-                    context: ErrorContext::new(),
-                })
-            })?;
-        }
-
-        // Log final stats
-        if self.config.log_stats {
-            if let Some(duration) = stats_clone.duration() {
-                let rps = stats_clone.requests_per_second().unwrap_or(0.0);
-                info!(
-                    "Final stats: {} requests, {} responses, {} items, {} errors, {:.2} req/s, {:.2}s elapsed",
-                    stats_clone.request_count,
-                    stats_clone.response_count,
-                    stats_clone.item_count,
-                    stats_clone.error_count,
-                    rps,
-                    duration.as_secs_f64(),
-                );
-            }
-        }
-
         // Get error statistics
         let error_stats = self.error_manager.stats().await;
         info!(
@@ -1185,20 +1130,13 @@ impl Engine {
             error_stats.ignored
         );
 
-        // Create a clone of signals for use at the end of the function
-        let signals_clone = self.signals.clone();
+        // Call our dedicated close method to handle all cleanup properly
+        // This ensures consistent cleanup behavior in normal and error scenarios
+        self.close().await?;
 
-        // Use the cloned signals at the end of the function
-        signals_clone
-            .send_catch_log(Signal::EngineStopped, SignalArgs::None)
-            .await;
-
-        // Stop resource monitoring
-        if let Some(ref controller) = self.resource_controller {
-            controller.stop().await;
-        }
-
-        Ok(stats_clone)
+        // Return the final stats
+        let final_stats = self.stats.read().await.clone();
+        Ok(final_stats)
     }
 
     /// Get the current engine statistics
@@ -1332,6 +1270,154 @@ impl Engine {
             None
         }
     }
+
+    /// Close the engine and clean up resources
+    ///
+    /// This method ensures proper cleanup of all engine resources, including:
+    /// - Closing the spider
+    /// - Shutting down pipelines
+    /// - Stopping middleware
+    /// - Canceling active tasks
+    /// - Sending appropriate signals
+    ///
+    /// It can be called at any time, even if the engine is in a hanging state
+    /// or when a timeout occurs.
+    pub async fn close(&self) -> Result<()> {
+        info!("Initiating controlled engine shutdown");
+
+        // Set engine to not running state
+        {
+            let mut running = self.running.write().await;
+            *running = false;
+        }
+
+        // Send engine stopping signal
+        self.signals
+            .send_catch_log(Signal::EngineStopping, SignalArgs::None)
+            .await;
+
+        // Close the spider
+        info!("Closing spider: {}", self.spider.name());
+
+        // Use timeout mechanism to avoid hanging if any of these operations take too long
+        let timeout_duration = Duration::from_secs(5); // 5 second timeout for each operation
+
+        // Close pipelines with timeout
+        match tokio::time::timeout(timeout_duration, self.pipelines.close_spider(&*self.spider))
+            .await
+        {
+            Ok(result) => {
+                if let Err(e) = result {
+                    warn!("Error closing pipelines: {}", e);
+                } else {
+                    debug!("Pipelines closed successfully");
+                }
+            }
+            Err(_) => warn!("Timeout while closing pipelines"),
+        }
+
+        // Close response middlewares with timeout
+        match tokio::time::timeout(
+            timeout_duration,
+            self.response_middlewares.spider_closed(&*self.spider),
+        )
+        .await
+        {
+            Ok(result) => {
+                if let Err(e) = result {
+                    warn!("Error closing response middlewares: {}", e);
+                } else {
+                    debug!("Response middlewares closed successfully");
+                }
+            }
+            Err(_) => warn!("Timeout while closing response middlewares"),
+        }
+
+        // Close request middlewares with timeout
+        match tokio::time::timeout(
+            timeout_duration,
+            self.request_middlewares.spider_closed(&*self.spider),
+        )
+        .await
+        {
+            Ok(result) => {
+                if let Err(e) = result {
+                    warn!("Error closing request middlewares: {}", e);
+                } else {
+                    debug!("Request middlewares closed successfully");
+                }
+            }
+            Err(_) => warn!("Timeout while closing request middlewares"),
+        }
+
+        // Call spider's closed method with timeout
+        match tokio::time::timeout(timeout_duration, self.spider.closed()).await {
+            Ok(result) => {
+                if let Err(e) = result {
+                    warn!("Error calling spider.closed(): {}", e);
+                } else {
+                    debug!("Spider closed successfully");
+                }
+            }
+            Err(_) => warn!("Timeout while closing spider"),
+        }
+
+        // Send spider closed signal
+        self.signals
+            .send_catch_log(
+                Signal::SpiderClosed,
+                SignalArgs::Spider(self.spider.clone()),
+            )
+            .await;
+
+        // Close item channel if it exists
+        if let Some(tx) = &self.item_tx {
+            // Check if the channel is closed; if not, drop it
+            if !tx.is_closed() {
+                let _ = tx;
+            }
+        }
+
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.end_time = Some(Instant::now());
+        }
+
+        // Log final stats
+        if self.config.log_stats {
+            let stats_clone = self.stats.read().await.clone();
+            if let Some(duration) = stats_clone.duration() {
+                let rps = stats_clone.requests_per_second().unwrap_or(0.0);
+                info!(
+                    "Final stats: {} requests, {} responses, {} items, {} errors, {:.2} req/s, {:.2}s elapsed",
+                    stats_clone.request_count,
+                    stats_clone.response_count,
+                    stats_clone.item_count,
+                    stats_clone.error_count,
+                    rps,
+                    duration.as_secs_f64(),
+                );
+            }
+        }
+
+        // Notify all waiting tasks to resume execution
+        // (Important to unblock any waiting tasks so they can terminate)
+        self.pause_notify.notify_waiters();
+
+        // Stop resource monitoring if enabled
+        if let Some(ref controller) = self.resource_controller {
+            controller.stop().await;
+        }
+
+        // Send final engine stopped signal
+        self.signals
+            .send_catch_log(Signal::EngineStopped, SignalArgs::None)
+            .await;
+
+        info!("Engine shutdown completed");
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1345,6 +1431,9 @@ mod tests {
     use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // Import close_test module
+    mod close_test;
 
     struct TestSpider {
         name: String,

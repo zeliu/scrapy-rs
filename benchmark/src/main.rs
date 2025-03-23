@@ -9,6 +9,7 @@ use log::{error, info, warn};
 use scrapy_rs_benchmark::{
     common::{get_predefined_scenarios, TestScenario},
     compare_results, generate_report,
+    mock_server::MockServerConfig,
     scrapy::ScrapyBenchmarkRunner,
     scrapy_rs::ScrapyRsBenchmarkRunner,
     BenchmarkResult, BenchmarkRunner,
@@ -35,7 +36,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run a benchmark
-    Run(RunArgs),
+    Run(Box<RunArgs>),
 
     /// List available scenarios
     List,
@@ -98,6 +99,38 @@ struct RunArgs {
     /// Output directory for results
     #[arg(short, long, value_name = "DIR")]
     output_dir: Option<PathBuf>,
+
+    /// Use a mock server instead of real URLs
+    #[arg(long)]
+    use_mock_server: bool,
+
+    /// Port for the mock server
+    #[arg(long, default_value = "8000")]
+    mock_server_port: u16,
+
+    /// Number of pages for the mock server
+    #[arg(long, default_value = "100")]
+    mock_server_pages: usize,
+
+    /// Links per page for the mock server
+    #[arg(long, default_value = "10")]
+    mock_server_links: usize,
+
+    /// Response delay in milliseconds for the mock server
+    #[arg(long, default_value = "0")]
+    mock_server_delay: u64,
+
+    /// Simulate failures in the mock server
+    #[arg(long)]
+    mock_server_failures: bool,
+
+    /// Failure rate (0.0 - 1.0) for the mock server
+    #[arg(long, default_value = "0.1")]
+    mock_server_failure_rate: f64,
+
+    /// Maximum run time in seconds (0 means no limit)
+    #[arg(long, default_value = "30")]
+    max_run_time_seconds: u64,
 }
 
 /// Arguments for the report command
@@ -138,7 +171,7 @@ fn main() {
 }
 
 /// Run a benchmark
-fn run_benchmark(args: RunArgs, output_dir: Option<String>) {
+fn run_benchmark(args: Box<RunArgs>, output_dir: Option<String>) {
     // Get the scenario
     let scenario = if let Some(name) = args.scenario {
         // Find the predefined scenario
@@ -207,10 +240,41 @@ fn run_benchmark(args: RunArgs, output_dir: Option<String>) {
         }
     }
 
+    // Configure the mock server if requested
+    let mock_server_config = if args.use_mock_server {
+        info!("Mock server will be used for benchmarking");
+        Some(
+            MockServerConfig::new()
+                .with_port(args.mock_server_port)
+                .with_page_count(args.mock_server_pages)
+                .with_links_per_page(args.mock_server_links)
+                .with_response_delay(args.mock_server_delay)
+                .with_simulate_failures(args.mock_server_failures)
+                .with_failure_rate(args.mock_server_failure_rate),
+        )
+    } else {
+        None
+    };
+
     // Print benchmark information
     info!("Running benchmark: {}", scenario.name.bold());
     info!("Description: {}", scenario.description);
-    info!("URLs: {}", scenario.urls.join(", "));
+    if args.use_mock_server {
+        info!("{}", "USING MOCK SERVER".bold().green());
+        info!("Mock server port: {}", args.mock_server_port);
+        info!("Mock server pages: {}", args.mock_server_pages);
+        info!("Mock server links per page: {}", args.mock_server_links);
+        info!("Mock server response delay: {}ms", args.mock_server_delay);
+        if args.mock_server_failures {
+            info!(
+                "Mock server failures enabled with rate: {:.2}",
+                args.mock_server_failure_rate
+            );
+        }
+        info!("Original URLs will be ignored");
+    } else {
+        info!("URLs: {}", scenario.urls.join(", "));
+    }
     info!("Page limit: {}", scenario.page_limit);
     info!("Max depth: {}", scenario.max_depth);
     info!("Concurrent requests: {}", scenario.concurrent_requests);
@@ -229,6 +293,13 @@ fn run_benchmark(args: RunArgs, output_dir: Option<String>) {
 
         if let Some(ref dir) = output_dir {
             runner = runner.with_output_dir(dir);
+        }
+
+        // Configure mock server if requested
+        if args.use_mock_server {
+            if let Some(config) = &mock_server_config {
+                runner = runner.with_mock_server(config.clone());
+            }
         }
 
         let result = runner.run();
@@ -255,6 +326,16 @@ fn run_benchmark(args: RunArgs, output_dir: Option<String>) {
         if let Some(ref dir) = output_dir {
             runner = runner.with_output_dir(dir);
         }
+
+        // Configure mock server if requested
+        if args.use_mock_server {
+            if let Some(config) = &mock_server_config {
+                runner = runner.with_mock_server(config.clone());
+            }
+        }
+
+        // Set maximum run time
+        runner = runner.with_max_run_time(args.max_run_time_seconds);
 
         let result = runner.run();
 

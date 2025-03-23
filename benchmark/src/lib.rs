@@ -10,6 +10,7 @@ use log::info;
 use serde::{Deserialize, Serialize};
 
 pub mod common;
+pub mod mock_server;
 pub mod scrapy;
 pub mod scrapy_rs;
 
