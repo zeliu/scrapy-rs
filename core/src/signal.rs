@@ -16,6 +16,8 @@ use crate::spider::Spider;
 pub enum Signal {
     /// Sent when engine starts
     EngineStarted,
+    /// Sent when engine is in the process of stopping
+    EngineStopping,
     /// Sent when engine stops
     EngineStopped,
     /// Sent when engine pauses
@@ -42,6 +44,7 @@ impl fmt::Display for Signal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Signal::EngineStarted => write!(f, "engine_started"),
+            Signal::EngineStopping => write!(f, "engine_stopping"),
             Signal::EngineStopped => write!(f, "engine_stopped"),
             Signal::EnginePaused => write!(f, "engine_paused"),
             Signal::EngineResumed => write!(f, "engine_resumed"),

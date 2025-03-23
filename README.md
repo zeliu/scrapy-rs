@@ -10,6 +10,7 @@ Scrapy-RS is a high-performance web crawler written in Rust, with Python binding
 - **Modular**: Designed with a modular architecture for easy extension and customization.
 - **Python Bindings**: Can be used from Python via PyO3 bindings.
 - **Scrapy-Compatible**: Familiar API for users of the popular Python Scrapy framework.
+- **Benchmarking Tools**: Includes tools for comparing performance with Python's Scrapy, with a mock server for controlled testing environments.
 
 ## Components
 
@@ -22,6 +23,7 @@ Scrapy-RS is composed of several components:
 - **Middleware**: Hooks for modifying requests and responses.
 - **Engine**: Orchestrates the crawling process.
 - **Python**: Python bindings for the crawler.
+- **Benchmark**: Tools for performance comparison between Scrapy-RS and Python's Scrapy, featuring a mock server for controlled and reproducible testing.
 
 ## Installation
 
@@ -117,7 +119,23 @@ print(f"Duration: {stats.duration_seconds:.2f} seconds")
 print(f"Requests per second: {stats.requests_per_second:.2f}")
 ```
 
-For more advanced usage, see the examples in the `examples` directory.
+### Benchmarking
+
+Here's how to run benchmarks to compare Scrapy-RS and Scrapy performance:
+
+```bash
+# Simple benchmark with real websites
+cd benchmark
+cargo run -- run --urls https://example.com --output-dir results
+
+# Benchmark with mock server for controlled testing environment
+cargo run -- run --use-mock-server --mock-server-pages 50 --mock-server-links 5 --output-dir results_mock
+
+# Generate HTML report comparing the results
+cargo run -- report --input-dir results --output-dir reports
+```
+
+For more advanced usage, see the examples in the `examples` directory and the [Benchmark Documentation](benchmark/README.md).
 
 ## Documentation
 

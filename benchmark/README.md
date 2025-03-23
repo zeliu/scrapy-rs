@@ -10,6 +10,7 @@ This module provides benchmarking tools for comparing the performance of Scrapy-
 - Detailed performance metrics
 - HTML reports with charts
 - Criterion-based micro-benchmarks
+- Mock server for controlled and reproducible testing environments
 
 ## Requirements
 
@@ -66,6 +67,22 @@ Run only Scrapy:
 cargo run --release -- run --scenario medium --only-scrapy --output-dir results
 ```
 
+### Using the Mock Server
+
+Run a benchmark with the mock server:
+
+```bash
+cargo run --release -- run --use-mock-server --output-dir results
+```
+
+Customize the mock server configuration:
+
+```bash
+cargo run --release -- run --use-mock-server --mock-server-pages 50 --mock-server-links 5 --output-dir results
+```
+
+For more details about the mock server, see [Mock Server Documentation](README_MOCK_SERVER.md).
+
 ### Generate a Report
 
 Generate a report from existing benchmark results:
@@ -112,6 +129,24 @@ The HTML report includes:
 - Performance comparison charts
 - Resource usage charts
 - Detailed results table
+
+## Mock Server
+
+The benchmark tool includes a mock server that can be used to create a controlled and reproducible environment for testing. Using the mock server has several advantages:
+
+- **Reproducibility**: Tests can be run in a controlled environment without external dependencies
+- **Consistency**: Eliminates variables like network latency and website response times
+- **Accurate Comparison**: Provides a fair comparison between different crawlers
+- **No External Impact**: Avoids impacting real websites with benchmark traffic
+- **Configurable**: Allows customization of the test environment (number of pages, links, response delays, etc.)
+
+The mock server simulates a website with configurable parameters such as:
+- Number of pages
+- Links per page
+- Response delay
+- Failure simulation
+
+See the [Mock Server Documentation](README_MOCK_SERVER.md) for detailed information on how to use and configure the mock server.
 
 ## Extending
 

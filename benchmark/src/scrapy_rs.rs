@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::warn;
+use log::{info, warn};
 use tokio::runtime::Runtime;
 
 use scrapy_rs_core::error::Result as ScrapyResult;
@@ -20,6 +20,7 @@ use scrapy_rs_pipeline::{JsonFilePipeline, LogPipeline, Pipeline};
 use scrapy_rs_scheduler::{MemoryScheduler, Scheduler};
 
 use crate::common::TestScenario;
+use crate::mock_server::{MockServer, MockServerConfig};
 use crate::BenchmarkResult;
 use crate::BenchmarkRunner;
 use crate::{get_cpu_usage, get_memory_usage};
@@ -34,6 +35,12 @@ pub struct ScrapyRsBenchmarkRunner {
     output_dir: Option<String>,
     /// Whether to show progress
     show_progress: bool,
+    /// Whether to use a mock server
+    use_mock_server: bool,
+    /// Mock server configuration
+    mock_server_config: Option<MockServerConfig>,
+    /// Maximum run time in seconds (0 means no limit)
+    max_run_time_seconds: u64,
 }
 
 impl ScrapyRsBenchmarkRunner {
@@ -44,6 +51,9 @@ impl ScrapyRsBenchmarkRunner {
             scenario,
             output_dir: None,
             show_progress: true,
+            use_mock_server: false,
+            mock_server_config: None,
+            max_run_time_seconds: 0, // No time limit by default
         }
     }
 
@@ -59,93 +69,17 @@ impl ScrapyRsBenchmarkRunner {
         self
     }
 
-    /// Create a spider for the benchmark
-    fn create_spider(&self) -> Arc<dyn Spider> {
-        // Create a custom Spider implementation
-        struct BenchmarkSpider {
-            name: String,
-            urls: Vec<String>,
-            #[allow(dead_code)]
-            max_depth: usize,
-        }
+    /// Configure the benchmark to use a mock server
+    pub fn with_mock_server(mut self, config: MockServerConfig) -> Self {
+        self.use_mock_server = true;
+        self.mock_server_config = Some(config);
+        self
+    }
 
-        impl BenchmarkSpider {
-            fn new(name: String, urls: Vec<String>, max_depth: usize) -> Self {
-                Self {
-                    name,
-                    urls,
-                    max_depth,
-                }
-            }
-        }
-
-        #[async_trait]
-        impl Spider for BenchmarkSpider {
-            fn name(&self) -> &str {
-                &self.name
-            }
-
-            fn start_urls(&self) -> Vec<String> {
-                self.urls.clone()
-            }
-
-            async fn parse(&self, response: Response) -> ScrapyResult<ParseOutput> {
-                let mut output = ParseOutput::new();
-
-                // Create an item for this page
-                let mut item = DynamicItem::new("page");
-                item.set("url", serde_json::Value::String(response.url.to_string()));
-
-                // Extract title if available
-                if let Ok(text) = response.text() {
-                    if let Some(title_start) = text.find("<title>") {
-                        if let Some(title_end) = text.find("</title>") {
-                            let title = &text[title_start + 7..title_end];
-                            item.set("title", serde_json::Value::String(title.to_string()));
-                        }
-                    }
-
-                    // Extract links
-                    let mut links = Vec::new();
-                    let mut pos = 0;
-                    while let Some(href_start) = text[pos..].find("href=\"") {
-                        pos += href_start + 6;
-                        if let Some(href_end) = text[pos..].find("\"") {
-                            let href = &text[pos..pos + href_end];
-                            if !href.starts_with("#") && !href.starts_with("javascript:") {
-                                if let Ok(url) = response.urljoin(href) {
-                                    links.push(url.to_string());
-
-                                    // Create a new request for this URL
-                                    if let Ok(request) = Request::get(url.as_str()) {
-                                        output.requests.push(request);
-                                    }
-                                }
-                            }
-                            pos += href_end + 1;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // Add links to the item
-                    let links_json: Vec<serde_json::Value> = links
-                        .iter()
-                        .map(|l| serde_json::Value::String(l.clone()))
-                        .collect();
-                    item.set("links", serde_json::Value::Array(links_json));
-                }
-
-                output.items.push(item);
-                Ok(output)
-            }
-        }
-
-        Arc::new(BenchmarkSpider::new(
-            self.name.clone(),
-            self.scenario.urls.clone(),
-            self.scenario.max_depth,
-        ))
+    /// Set the maximum run time in seconds
+    pub fn with_max_run_time(mut self, seconds: u64) -> Self {
+        self.max_run_time_seconds = seconds;
+        self
     }
 
     /// Create a downloader for the benchmark
@@ -215,6 +149,104 @@ impl ScrapyRsBenchmarkRunner {
             config,
         )
     }
+
+    // Add new helper method to create a spider with a specific scenario
+    fn create_spider_with_scenario(&self, scenario: TestScenario) -> Arc<dyn Spider> {
+        // Create a basic spider
+        struct BenchmarkSpider {
+            name: String,
+            start_urls: Vec<String>,
+            page_limit: usize,
+            max_depth: u32,
+            links_per_page: usize,
+        }
+
+        #[async_trait]
+        impl Spider for BenchmarkSpider {
+            fn name(&self) -> &str {
+                &self.name
+            }
+
+            fn start_urls(&self) -> Vec<String> {
+                self.start_urls.clone()
+            }
+
+            async fn parse(&self, response: Response) -> ScrapyResult<ParseOutput> {
+                let mut output = ParseOutput::new();
+
+                // Extract depth from meta, defaulting to 0
+                let depth = match response.meta.get("depth") {
+                    Some(value) => {
+                        if let Some(d) = value.as_u64() {
+                            d as u32
+                        } else {
+                            0
+                        }
+                    }
+                    None => 0,
+                };
+
+                // Create an item from the response
+                let mut item = DynamicItem::new("benchmark_item");
+                item.set("url", response.url.to_string());
+                item.set("title", "Benchmark Page".to_string());
+                item.set("depth", depth);
+                output.add_item(item);
+
+                // Follow links if we haven't reached the limit
+                if depth < self.max_depth {
+                    // Extract links and follow them
+                    let base_url = response.url.origin().ascii_serialization();
+
+                    // For mock server, links are in the format /<id> (e.g. /0, /1, /2)
+                    for i in 1..=self.links_per_page {
+                        // Don't exceed page limit
+                        if output.requests.len() + 1 >= self.page_limit {
+                            break;
+                        }
+
+                        // Create a new URL using the correct mock server format
+                        let url = format!("{}/{}", base_url, i);
+                        let mut request = Request::get(&url).unwrap();
+                        // Store depth as a JSON number
+                        request
+                            .meta
+                            .insert("depth".to_string(), serde_json::json!(depth + 1));
+                        output.add_request(request);
+                    }
+                }
+
+                Ok(output)
+            }
+
+            // Implement the closed method to ensure proper cleanup
+            async fn closed(&self) -> ScrapyResult<()> {
+                info!("BenchmarkSpider closed cleanly");
+                Ok(())
+            }
+        }
+
+        // Determine the links per page from mock server config if available
+        let links_per_page = if self.use_mock_server {
+            self.mock_server_config
+                .as_ref()
+                .map_or(5, |config| config.links_per_page)
+        } else {
+            // Default value if not using mock server
+            5
+        };
+
+        // Create a spider instance
+        let spider = BenchmarkSpider {
+            name: scenario.name.clone(),
+            start_urls: scenario.urls.clone(),
+            page_limit: scenario.page_limit,
+            max_depth: scenario.max_depth as u32,
+            links_per_page,
+        };
+
+        Arc::new(spider)
+    }
 }
 
 impl BenchmarkRunner for ScrapyRsBenchmarkRunner {
@@ -226,101 +258,122 @@ impl BenchmarkRunner for ScrapyRsBenchmarkRunner {
         "scrapy-rs"
     }
 
+    /// Run the benchmark
     fn run(&mut self) -> BenchmarkResult {
         // Create a new benchmark result
         let mut result = BenchmarkResult::new(&self.name, "scrapy-rs");
         result.start_time = chrono::Utc::now();
 
-        // Create a progress bar if requested
+        // Create a progress bar if needed
         let progress_bar = if self.show_progress {
-            let pb = ProgressBar::new(self.scenario.page_limit as u64);
-            pb.set_style(ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} pages ({eta})")
-                .unwrap()
-                .progress_chars("#>-"));
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} {msg}")
+                    .unwrap(),
+            );
+            pb.set_message("Running benchmark...");
             Some(pb)
         } else {
             None
         };
 
-        // Create a tokio runtime
-        let runtime = Runtime::new().expect("Failed to create tokio runtime");
+        // Start the mock server if configured
+        let mut mock_server: Option<(MockServer, tokio::runtime::Runtime)> = None;
+        let _original_urls = self.scenario.urls.clone();
+        let mut modified_scenario = self.scenario.clone();
 
-        // Create the spider, downloader, and scheduler
-        let spider = self.create_spider();
-        let downloader = self.create_downloader();
-        let scheduler = self.create_scheduler();
+        if self.use_mock_server {
+            if let Some(config) = &self.mock_server_config {
+                if let Some(pb) = &progress_bar {
+                    pb.set_message("Starting mock server...");
+                }
 
-        // Create the engine
-        let mut engine = self.create_engine(spider, downloader, scheduler);
+                let mut server = MockServer::new(config.clone());
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                let base_url =
+                    runtime.block_on(async { server.start(config.clone()).await.unwrap() });
+
+                // Replace the URLs with the mock server URL
+                modified_scenario.urls = vec![format!("{}/0", base_url)];
+
+                mock_server = Some((server, runtime));
+
+                if let Some(pb) = &progress_bar {
+                    pb.set_message("Mock server started");
+                }
+            }
+        }
 
         // Record memory and CPU usage before the benchmark
         let memory_before = get_memory_usage();
         let cpu_before = get_cpu_usage();
 
-        // Run the engine and measure the time
-        let start_time = Instant::now();
+        // Create a runtime
+        let rt = Runtime::new().unwrap();
 
-        // If we have a progress bar, update it as the engine runs
-        let stats = if let Some(pb) = &progress_bar {
-            // Create a thread-safe counter that can be shared between threads
-            let request_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let request_count_for_thread = request_count.clone();
-
-            // Create an atomic boolean indicating whether the engine is still running
-            let engine_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-            let engine_running_for_thread = engine_running.clone();
-
-            // Update the progress bar in a separate thread
-            let pb_clone = pb.clone();
-            let handle = std::thread::spawn(move || {
-                while engine_running_for_thread.load(std::sync::atomic::Ordering::SeqCst) {
-                    // Get the current request count and update the progress bar
-                    let count = request_count_for_thread.load(std::sync::atomic::Ordering::SeqCst);
-                    pb_clone.set_position(count as u64);
-
-                    // Brief sleep to reduce CPU usage
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-
-                // Final progress bar update
-                let final_count =
-                    request_count_for_thread.load(std::sync::atomic::Ordering::SeqCst);
-                pb_clone.set_position(final_count as u64);
-            });
-
-            // Create an engine wrapper that will update the counter after each request
-            // To implement this, we need to modify Engine or create a request interceptor
-            // But since we can't directly modify Engine's internals, we'll use the final stats to update the progress bar
-
-            // Run the engine
-            let engine_stats = runtime
-                .block_on(engine.run())
-                .expect("Failed to run engine");
-
-            // Engine has stopped running
-            engine_running.store(false, std::sync::atomic::Ordering::SeqCst);
-
-            // Wait for the progress bar thread to complete
-            let _ = handle.join();
-
-            // Make sure the progress bar shows the final state
-            pb.set_position(engine_stats.request_count as u64);
-            pb.finish_with_message("Benchmark completed");
-
-            engine_stats
+        // Create a spider, downloader, and scheduler
+        // Use the modified scenario if we're using a mock server
+        let scenario_to_use = if self.use_mock_server && mock_server.is_some() {
+            &modified_scenario
         } else {
-            // Run the engine without progress updates
-            runtime
-                .block_on(engine.run())
-                .expect("Failed to run engine")
+            &self.scenario
         };
 
-        // Update the result with the stats
-        result.request_count = stats.request_count;
-        result.response_count = stats.response_count;
-        result.item_count = stats.item_count;
-        result.error_count = stats.error_count;
+        // Create components with the appropriate scenario
+        let spider = self.create_spider_with_scenario(scenario_to_use.clone());
+        let downloader = self.create_downloader();
+        let scheduler = self.create_scheduler();
+
+        // Create and run the engine
+        let mut engine = self.create_engine(spider.clone(), downloader, scheduler);
+
+        // Record the start time
+        let start_time = Instant::now();
+
+        // Update progress bar
+        if let Some(pb) = &progress_bar {
+            pb.set_message("Crawling...");
+        }
+
+        // Run the crawler with timeout if configured
+        if self.max_run_time_seconds > 0 {
+            // Use tokio::time::timeout but in a simpler way
+            rt.block_on(async {
+                let timeout_duration = std::time::Duration::from_secs(self.max_run_time_seconds);
+                let timeout_future = tokio::time::sleep(timeout_duration);
+                let run_future = async {
+                    match engine.run().await {
+                        Ok(_) => {}
+                        Err(e) => warn!("Error running engine: {}", e),
+                    }
+                };
+
+                tokio::select! {
+                    _ = timeout_future => {
+                        warn!("Crawler timed out after {} seconds", self.max_run_time_seconds);
+                        info!("Performing controlled engine shutdown due to timeout");
+
+                        // Use the new close() method to ensure proper cleanup
+                        match engine.close().await {
+                            Ok(_) => info!("Engine shutdown completed successfully after timeout"),
+                            Err(e) => warn!("Error during engine shutdown after timeout: {}", e),
+                        }
+                    }
+                    _ = run_future => {
+                        info!("Crawler completed successfully within time limit");
+                    }
+                }
+            });
+        } else {
+            // Run without timeout
+            rt.block_on(async {
+                match engine.run().await {
+                    Ok(_) => {}
+                    Err(e) => warn!("Error running engine: {}", e),
+                }
+            });
+        }
 
         // Record the end time and duration
         let duration = start_time.elapsed();
@@ -335,6 +388,13 @@ impl BenchmarkRunner for ScrapyRsBenchmarkRunner {
         result.memory_usage_mb = memory_after - memory_before;
         result.cpu_usage_percent = cpu_after - cpu_before;
 
+        // Get stats from the engine instead of using hardcoded values
+        let engine_stats = rt.block_on(async { engine.stats().await });
+        result.request_count = engine_stats.request_count;
+        result.response_count = engine_stats.response_count;
+        result.item_count = engine_stats.item_count;
+        result.error_count = engine_stats.error_count;
+
         // Calculate derived metrics
         result.calculate_metrics();
 
@@ -344,6 +404,26 @@ impl BenchmarkRunner for ScrapyRsBenchmarkRunner {
             if let Err(e) = result.save_to_csv(&csv_path) {
                 warn!("Failed to save benchmark result to CSV: {}", e);
             }
+        }
+
+        // Stop the mock server if it was started
+        if let Some((mut server, runtime)) = mock_server {
+            if let Some(pb) = &progress_bar {
+                pb.set_message("Stopping mock server...");
+            }
+
+            runtime.block_on(async {
+                server.stop().await;
+            });
+
+            if let Some(pb) = &progress_bar {
+                pb.set_message("Mock server stopped");
+            }
+        }
+
+        // Finish the progress bar if it exists
+        if let Some(pb) = progress_bar {
+            pb.finish_with_message("Benchmark completed");
         }
 
         result

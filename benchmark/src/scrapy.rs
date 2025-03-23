@@ -11,6 +11,7 @@ use log::{error, warn};
 use serde_json::{self, Value};
 
 use crate::common::TestScenario;
+use crate::mock_server::{MockServer, MockServerConfig};
 use crate::BenchmarkResult;
 use crate::BenchmarkRunner;
 use crate::{get_cpu_usage, get_memory_usage};
@@ -29,6 +30,10 @@ pub struct ScrapyBenchmarkRunner {
     python_path: String,
     /// Path to the temporary directory for the benchmark
     temp_dir: PathBuf,
+    /// Whether to use a mock server
+    use_mock_server: bool,
+    /// Mock server configuration
+    mock_server_config: Option<MockServerConfig>,
 }
 
 impl ScrapyBenchmarkRunner {
@@ -43,6 +48,8 @@ impl ScrapyBenchmarkRunner {
             show_progress: true,
             python_path: "python".to_string(),
             temp_dir,
+            use_mock_server: false,
+            mock_server_config: None,
         }
     }
 
@@ -61,6 +68,13 @@ impl ScrapyBenchmarkRunner {
     /// Set the Python executable path
     pub fn with_python_path(mut self, path: &str) -> Self {
         self.python_path = path.to_string();
+        self
+    }
+
+    /// Configure the benchmark to use a mock server
+    pub fn with_mock_server(mut self, config: MockServerConfig) -> Self {
+        self.use_mock_server = true;
+        self.mock_server_config = Some(config);
         self
     }
 
@@ -116,8 +130,31 @@ impl ScrapyBenchmarkRunner {
         // Modify settings file
         self.update_settings()?;
 
-        // Modify spider file
-        self.update_spider()?;
+        // Modify spider file (don't set URLs yet if using mock server)
+        if !self.use_mock_server {
+            self.update_spider()?;
+        } else {
+            // Just update other aspects of the spider file, not the URLs
+            let spider_path = self
+                .temp_dir
+                .join("benchmark")
+                .join("spiders")
+                .join("benchmark_spider.py");
+            let content = fs::read_to_string(&spider_path)?;
+
+            // Replace page limit and depth limit, but not start URLs
+            let content = content.replace(
+                "self.max_pages = 100",
+                &format!("self.max_pages = {}", self.scenario.page_limit),
+            );
+            let content = content.replace(
+                "self.max_depth = 2",
+                &format!("self.max_depth = {}", self.scenario.max_depth),
+            );
+
+            // Write back file
+            fs::write(spider_path, content)?;
+        }
 
         // Modify pipeline file
         self.update_pipeline()?;
@@ -255,12 +292,61 @@ impl ScrapyBenchmarkRunner {
             None
         };
 
+        // Start the mock server if configured
+        let mut mock_server = None;
+        let mut urls_to_use = self.scenario.urls.clone();
+
+        if self.use_mock_server {
+            if let Some(config) = &self.mock_server_config {
+                if let Some(pb) = &progress_bar {
+                    pb.set_message("Starting mock server...");
+                }
+
+                let mut server = MockServer::new(config.clone());
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                let base_url =
+                    runtime.block_on(async { server.start(config.clone()).await.unwrap() });
+
+                // Replace the URLs with the mock server URL
+                urls_to_use = vec![format!("{}/0", base_url)];
+
+                mock_server = Some((server, runtime));
+
+                if let Some(pb) = &progress_bar {
+                    pb.set_message("Mock server started");
+                }
+            }
+        }
+
         // Record memory and CPU usage before the benchmark
         let memory_before = get_memory_usage();
         let cpu_before = get_cpu_usage();
 
         // Run the spider and measure the time
         let start_time = Instant::now();
+
+        // Create temporary spider file with the correct URLs
+        let spider_path = self
+            .temp_dir
+            .join("benchmark")
+            .join("spiders")
+            .join("benchmark_spider.py");
+        let spider_content = fs::read_to_string(&spider_path)?;
+
+        // Format URLs for Python
+        let formatted_urls = urls_to_use
+            .iter()
+            .map(|url| format!("'{}'", url))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let python_urls = format!("[{}]", formatted_urls);
+
+        // Update spider file with the correct URLs
+        let updated_spider_content = spider_content.replace(
+            "self.start_urls = []",
+            &format!("self.start_urls = {}", python_urls),
+        );
+        fs::write(&spider_path, updated_spider_content)?;
 
         // Create the stats file
         let stats_path = self.temp_dir.join("stats.json");
@@ -281,6 +367,13 @@ impl ScrapyBenchmarkRunner {
         let status = cmd.status()?;
 
         if !status.success() {
+            // Stop the mock server if it was started
+            if let Some((mut server, runtime)) = mock_server {
+                runtime.block_on(async {
+                    server.stop().await;
+                });
+            }
+
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "Failed to run Scrapy spider.",
@@ -342,6 +435,21 @@ impl ScrapyBenchmarkRunner {
             let csv_path = format!("{}/{}_result.csv", dir, self.name);
             if let Err(e) = result.save_to_csv(&csv_path) {
                 warn!("Failed to save benchmark result to CSV: {}", e);
+            }
+        }
+
+        // Stop the mock server if it was started
+        if let Some((mut server, runtime)) = mock_server {
+            if let Some(pb) = &progress_bar {
+                pb.set_message("Stopping mock server...");
+            }
+
+            runtime.block_on(async {
+                server.stop().await;
+            });
+
+            if let Some(pb) = &progress_bar {
+                pb.set_message("Mock server stopped");
             }
         }
 
